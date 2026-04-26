@@ -10,6 +10,8 @@ The MVP is invite-only. Public registration and open XMPP federation are disable
 - [Requirements](#requirements)
 - [Real Host Setup](#real-host-setup)
 - [Configure](#configure)
+- [Environment Variables](#environment-variables)
+- [Certificates](#certificates)
 - [Run](#run)
 - [Portal Tools](#portal-tools)
 - [Admin UI](#admin-ui)
@@ -111,6 +113,37 @@ openssl rand -hex 32
 ```
 
 Do not commit `.env`.
+
+## Environment Variables
+
+| Variable                      | Required | Purpose                                      |
+| ----------------------------- | -------- | -------------------------------------------- |
+| `ROOT_DOMAIN`                 | Yes      | Parent domain for the instance.              |
+| `PORTAL_DOMAIN`               | Yes      | Public portal hostname.                      |
+| `CHAT_DOMAIN`                 | Yes      | Public chat hostname.                        |
+| `MEET_DOMAIN`                 | Yes      | Public Jitsi hostname.                       |
+| `LIBRARY_DOMAIN`              | Yes      | Reserved library hostname.                   |
+| `XMPP_DOMAIN`                 | Yes      | Prosody local XMPP domain.                   |
+| `XMPP_ADMIN_JID`              | Yes      | Prosody admin JID placeholder.               |
+| `XMPP_MUC_DOMAIN`             | Yes      | Prosody group chat domain.                   |
+| `XMPP_REGISTRATION_ENABLED`   | Yes      | Must stay `false` for the MVP.               |
+| `CONVERSE_BOSH_URL`           | Yes      | Browser BOSH URL routed through Caddy.       |
+| `CONVERSE_WEBSOCKET_URL`      | Yes      | Browser XMPP WebSocket URL through Caddy.    |
+| `POSTGRES_DB`                 | Yes      | Portal database name.                        |
+| `POSTGRES_USER`               | Yes      | Portal database user.                        |
+| `POSTGRES_PASSWORD`           | Yes      | Portal database password.                    |
+| `PORTAL_DATABASE_URL`         | Yes      | PostgreSQL URL used by portal tools.         |
+| `PORTAL_SECRET_KEY`           | Yes      | Portal signing secret placeholder.           |
+| `JITSI_PUBLIC_URL`            | Yes      | Public Jitsi URL.                            |
+| `JITSI_ENABLE_AUTH`           | Yes      | Keep `1` to require Jitsi authentication.    |
+| `JITSI_ENABLE_GUESTS`         | Yes      | Keep `0` for no anonymous public guests.     |
+| `JITSI_JWT_APP_ID`            | Yes      | Jitsi JWT app identifier.                    |
+| `JITSI_JWT_APP_SECRET`        | Yes      | Jitsi JWT shared secret.                     |
+| `JITSI_JICOFO_AUTH_PASSWORD`  | Yes      | Jitsi internal Jicofo password.              |
+| `JITSI_JVB_AUTH_PASSWORD`     | Yes      | Jitsi internal JVB password.                 |
+| `ACME_EMAIL`                  | Prod     | Email used by Caddy for Let's Encrypt.       |
+| `BACKUP_ROOT`                 | Yes      | Local backup output path.                    |
+| `RESTORE_CONFIRM`             | Restore  | Must be `restore-local-backup` for restores. |
 
 ## Certificates
 
