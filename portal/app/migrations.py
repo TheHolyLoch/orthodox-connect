@@ -1,0 +1,52 @@
+# Orthodox Connect - Developed by dgm (dgm@tuta.com)
+# orthodox-connect/portal/app/migrations.py
+
+import pathlib
+
+from portal.app import db
+
+
+MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
+
+
+def apply_migrations() -> list[str]:
+	'''
+	Apply unapplied SQL migrations and return their filenames.
+	'''
+
+	applied = []
+
+	with db.connect_database() as connection:
+		with connection.cursor() as cursor:
+			cursor.execute("SELECT to_regclass('public.users') AS users_table")
+			initial_schema_exists = cursor.fetchone()['users_table'] is not None
+
+			cursor.execute(
+				'''
+				CREATE TABLE IF NOT EXISTS schema_migrations (
+					filename text PRIMARY KEY,
+					applied_at timestamptz NOT NULL DEFAULT now()
+				)
+				'''
+			)
+
+			for migration_path in sorted(MIGRATIONS_DIR.glob('*.sql')):
+				if migration_path.name == '001_initial_schema.sql' and initial_schema_exists:
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
+				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
+
+				if cursor.fetchone():
+					continue
+
+				cursor.execute(migration_path.read_text())
+				cursor.execute('INSERT INTO schema_migrations (filename) VALUES (%s)', (migration_path.name,))
+				applied.append(migration_path.name)
+
+		connection.commit()
+
+	return applied

@@ -1,0 +1,4 @@
+# Orthodox Connect - Developed by dgm (dgm@tuta.com)
+# orthodox-connect/portal/requirements.txt
+
+psycopg[binary]>=3.1,<4
