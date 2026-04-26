@@ -52,6 +52,13 @@ def apply_migrations() -> list[str]:
 					)
 					continue
 
+				if migration_path.name == '004_room_access_model.sql' and migration_004_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
 				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
 
 				if cursor.fetchone():
@@ -99,6 +106,26 @@ def migration_003_exists(cursor) -> bool:
 		FROM pg_indexes
 		WHERE schemaname = 'public'
 			AND indexname = 'idx_verification_requests_request_type'
+		'''
+	)
+
+	return cursor.fetchone() is not None
+
+
+def migration_004_exists(cursor) -> bool:
+	'''
+	Return whether the room access model migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute(
+		'''
+		SELECT 1
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'rooms'
+			AND column_name = 'created_by_user_id'
 		'''
 	)
 

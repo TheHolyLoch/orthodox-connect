@@ -8,7 +8,7 @@ import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import invites, migrations, verifications
+from portal.app import invites, migrations, rooms, verifications
 
 
 def add_create_invite_parser(subparsers):
@@ -26,6 +26,58 @@ def add_create_invite_parser(subparsers):
 	parser.set_defaults(command=handle_create_invite)
 
 
+def add_add_room_member_parser(subparsers):
+	'''
+	Add the add-room-member subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('add-room-member')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--role', choices=sorted(rooms.ROOM_ROLES), default='member')
+	parser.add_argument('--room-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_add_room_member)
+
+
+def add_can_access_room_parser(subparsers):
+	'''
+	Add the can-access-room subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('can-access-room')
+	parser.add_argument('--room-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_can_access_room)
+
+
+def add_create_room_parser(subparsers):
+	'''
+	Add the create-room subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('create-room')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--group-id')
+	parser.add_argument('--name', required=True)
+	parser.add_argument('--scope', choices=sorted(rooms.ROOM_SCOPES), required=True)
+	parser.add_argument('--slug', required=True)
+	parser.add_argument('--xmpp-room-jid')
+	parser.set_defaults(command=handle_create_room)
+
+
+def add_change_room_access_parser(subparsers):
+	'''
+	Add the change-room-access subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('change-room-access')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--group-id')
+	parser.add_argument('--room-id', required=True)
+	parser.add_argument('--scope', choices=sorted(rooms.ROOM_SCOPES), required=True)
+	parser.set_defaults(command=handle_change_room_access)
+
+
 def add_list_invites_parser(subparsers):
 	'''
 	Add the list-invites subcommand parser.
@@ -33,6 +85,15 @@ def add_list_invites_parser(subparsers):
 
 	parser = subparsers.add_parser('list-invites')
 	parser.set_defaults(command=handle_list_invites)
+
+
+def add_list_rooms_parser(subparsers):
+	'''
+	Add the list-rooms subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('list-rooms')
+	parser.set_defaults(command=handle_list_rooms)
 
 
 def add_migrate_parser(subparsers):
@@ -92,6 +153,18 @@ def add_redeem_invite_parser(subparsers):
 	parser.set_defaults(command=handle_redeem_invite)
 
 
+def add_remove_room_member_parser(subparsers):
+	'''
+	Add the remove-room-member subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('remove-room-member')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--room-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_remove_room_member)
+
+
 def add_submit_verification_parser(subparsers):
 	'''
 	Add the submit-verification subcommand parser.
@@ -124,17 +197,53 @@ def build_parser() -> argparse.ArgumentParser:
 	parser     = argparse.ArgumentParser(prog='orthodox-connect-portal')
 	subparsers = parser.add_subparsers(dest='command_name')
 
+	add_add_room_member_parser(subparsers)
+	add_can_access_room_parser(subparsers)
+	add_change_room_access_parser(subparsers)
 	add_create_invite_parser(subparsers)
+	add_create_room_parser(subparsers)
 	add_list_invites_parser(subparsers)
+	add_list_rooms_parser(subparsers)
 	add_list_verifications_parser(subparsers)
 	add_migrate_parser(subparsers)
 	add_approve_verification_parser(subparsers)
 	add_reject_verification_parser(subparsers)
 	add_redeem_invite_parser(subparsers)
+	add_remove_room_member_parser(subparsers)
 	add_revoke_invite_parser(subparsers)
 	add_submit_verification_parser(subparsers)
 
 	return parser
+
+
+def handle_add_room_member(args):
+	'''
+	Handle add-room-member command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(rooms.add_room_membership(args.room_id, args.user_id, args.actor_user_id, args.role))
+
+
+def handle_can_access_room(args):
+	'''
+	Handle can-access-room command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json({'allowed': rooms.can_access_room(args.room_id, args.user_id)})
+
+
+def handle_change_room_access(args):
+	'''
+	Handle change-room-access command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(rooms.change_room_access(args.actor_user_id, args.room_id, args.scope, args.group_id))
 
 
 def handle_create_invite(args):
@@ -156,6 +265,25 @@ def handle_create_invite(args):
 	print_json(invite)
 
 
+def handle_create_room(args):
+	'''
+	Handle create-room command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(
+		rooms.create_room(
+			actor_user_id=args.actor_user_id,
+			group_id=args.group_id,
+			name=args.name,
+			privacy_level=args.scope,
+			slug=args.slug,
+			xmpp_room_jid=args.xmpp_room_jid
+		)
+	)
+
+
 def handle_approve_verification(args):
 	'''
 	Handle approve-verification command execution.
@@ -174,6 +302,16 @@ def handle_list_invites(args):
 	'''
 
 	print_json(invites.list_invites())
+
+
+def handle_list_rooms(args):
+	'''
+	Handle list-rooms command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(rooms.list_rooms())
 
 
 def handle_list_verifications(args):
@@ -223,6 +361,16 @@ def handle_redeem_invite(args):
 	print_json(result)
 
 
+def handle_remove_room_member(args):
+	'''
+	Handle remove-room-member command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(rooms.remove_room_membership(args.room_id, args.user_id, args.actor_user_id))
+
+
 def handle_submit_verification(args):
 	'''
 	Handle submit-verification command execution.
@@ -258,7 +406,7 @@ def main() -> int:
 
 	try:
 		args.command(args)
-	except (invites.InviteError, verifications.VerificationError) as e:
+	except (invites.InviteError, rooms.RoomAccessError, verifications.VerificationError) as e:
 		print_json({'error': str(e)})
 
 		return 1
