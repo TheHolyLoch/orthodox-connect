@@ -1,0 +1,22 @@
+// Orthodox Connect - Developed by dgm (dgm@tuta.com)
+// orthodox-connect/converse/config.js.template
+
+window.addEventListener('DOMContentLoaded', function () {
+	converse.initialize({
+		authentication: 'login',
+		auto_login: false,
+		bosh_service_url: '${CONVERSE_BOSH_URL}',
+		discover_connection_methods: false,
+		i18n: 'en',
+		jid: '${XMPP_DOMAIN}',
+		locked_domain: '${XMPP_DOMAIN}',
+		message_archiving: 'never',
+		muc_domain: '${XMPP_MUC_DOMAIN}',
+		registration_domain: '',
+		show_client_info: false,
+		show_controlbox_by_default: true,
+		show_converse_by_default: true,
+		view_mode: 'embedded',
+		websocket_url: '${CONVERSE_WEBSOCKET_URL}'
+	});
+});

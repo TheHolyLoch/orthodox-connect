@@ -71,13 +71,25 @@ services:
   converse:
     image: nginx:alpine
     container_name: orthodox_connect_converse
-    command: ["nginx", "-g", "daemon off;"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        cp /converse/index.html /usr/share/nginx/html/index.html
+        cp /converse/style.css /usr/share/nginx/html/style.css
+        envsubst '$$CHAT_DOMAIN $$XMPP_DOMAIN $$XMPP_MUC_DOMAIN $$CONVERSE_BOSH_URL $$CONVERSE_WEBSOCKET_URL' < /converse/config.js.template > /usr/share/nginx/html/config.js
+        nginx -g 'daemon off;'
     environment:
       CHAT_DOMAIN: "${CHAT_DOMAIN}"
       XMPP_DOMAIN: "${XMPP_DOMAIN}"
+      XMPP_MUC_DOMAIN: "${XMPP_MUC_DOMAIN}"
+      CONVERSE_BOSH_URL: "${CONVERSE_BOSH_URL}"
+      CONVERSE_WEBSOCKET_URL: "${CONVERSE_WEBSOCKET_URL}"
     networks:
       - internal
       - xmpp
+    volumes:
+      - ./converse:/converse:ro
     depends_on:
       - prosody
 

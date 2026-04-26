@@ -1,0 +1,30 @@
+<!-- Orthodox Connect - Developed by dgm (dgm@tuta.com) -->
+<!-- orthodox-connect/converse/index.html -->
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Orthodox Connect Chat</title>
+		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/converse.js@10/dist/converse.min.css">
+		<link rel="stylesheet" href="/style.css">
+	</head>
+	<body>
+		<main class="chat-shell">
+			<section class="chat-intro" aria-label="Chat sign in">
+				<div>
+					<p class="eyebrow">Orthodox Connect</p>
+					<h1>Chat</h1>
+					<p>Sign in with the XMPP account provided by your community administrator.</p>
+				</div>
+			</section>
+
+			<section class="chat-client" aria-label="Converse chat client">
+				<converse-root></converse-root>
+			</section>
+		</main>
+
+		<script src="https://cdn.jsdelivr.net/npm/converse.js@10/dist/converse.min.js"></script>
+		<script src="/config.js"></script>
+	</body>
+</html>
