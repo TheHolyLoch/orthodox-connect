@@ -38,6 +38,20 @@ def apply_migrations() -> list[str]:
 					)
 					continue
 
+				if migration_path.name == '002_invite_workflow.sql' and migration_002_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
+				if migration_path.name == '003_manual_verification.sql' and migration_003_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
 				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
 
 				if cursor.fetchone():
@@ -50,3 +64,42 @@ def apply_migrations() -> list[str]:
 		connection.commit()
 
 	return applied
+
+
+def migration_002_exists(cursor) -> bool:
+	'''
+	Return whether the invite workflow migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute(
+		'''
+		SELECT 1
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'invites'
+			AND column_name = 'reusable'
+		'''
+	)
+
+	return cursor.fetchone() is not None
+
+
+def migration_003_exists(cursor) -> bool:
+	'''
+	Return whether the manual verification migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute(
+		'''
+		SELECT 1
+		FROM pg_indexes
+		WHERE schemaname = 'public'
+			AND indexname = 'idx_verification_requests_request_type'
+		'''
+	)
+
+	return cursor.fetchone() is not None

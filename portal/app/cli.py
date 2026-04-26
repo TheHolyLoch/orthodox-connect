@@ -8,7 +8,7 @@ import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import invites, migrations
+from portal.app import invites, migrations, verifications
 
 
 def add_create_invite_parser(subparsers):
@@ -44,6 +44,41 @@ def add_migrate_parser(subparsers):
 	parser.set_defaults(command=handle_migrate)
 
 
+def add_list_verifications_parser(subparsers):
+	'''
+	Add the list-verifications subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('list-verifications')
+	parser.add_argument('--status')
+	parser.add_argument('--user-id')
+	parser.set_defaults(command=handle_list_verifications)
+
+
+def add_approve_verification_parser(subparsers):
+	'''
+	Add the approve-verification subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('approve-verification')
+	parser.add_argument('--admin-user-id', required=True)
+	parser.add_argument('--reason')
+	parser.add_argument('--request-id', required=True)
+	parser.set_defaults(command=handle_approve_verification)
+
+
+def add_reject_verification_parser(subparsers):
+	'''
+	Add the reject-verification subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('reject-verification')
+	parser.add_argument('--admin-user-id', required=True)
+	parser.add_argument('--reason', required=True)
+	parser.add_argument('--request-id', required=True)
+	parser.set_defaults(command=handle_reject_verification)
+
+
 def add_redeem_invite_parser(subparsers):
 	'''
 	Add the redeem-invite subcommand parser.
@@ -55,6 +90,19 @@ def add_redeem_invite_parser(subparsers):
 	parser.add_argument('--token', required=True)
 	parser.add_argument('--xmpp-jid')
 	parser.set_defaults(command=handle_redeem_invite)
+
+
+def add_submit_verification_parser(subparsers):
+	'''
+	Add the submit-verification subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('submit-verification')
+	parser.add_argument('--group-id')
+	parser.add_argument('--note')
+	parser.add_argument('--type', choices=sorted(verifications.ROLE_BY_REQUEST_TYPE), required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_submit_verification)
 
 
 def add_revoke_invite_parser(subparsers):
@@ -78,9 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 	add_create_invite_parser(subparsers)
 	add_list_invites_parser(subparsers)
+	add_list_verifications_parser(subparsers)
 	add_migrate_parser(subparsers)
+	add_approve_verification_parser(subparsers)
+	add_reject_verification_parser(subparsers)
 	add_redeem_invite_parser(subparsers)
 	add_revoke_invite_parser(subparsers)
+	add_submit_verification_parser(subparsers)
 
 	return parser
 
@@ -104,6 +156,16 @@ def handle_create_invite(args):
 	print_json(invite)
 
 
+def handle_approve_verification(args):
+	'''
+	Handle approve-verification command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(verifications.approve_request(args.request_id, args.admin_user_id, args.reason))
+
+
 def handle_list_invites(args):
 	'''
 	Handle list-invites command execution.
@@ -114,6 +176,16 @@ def handle_list_invites(args):
 	print_json(invites.list_invites())
 
 
+def handle_list_verifications(args):
+	'''
+	Handle list-verifications command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(verifications.list_requests(args.status, args.user_id))
+
+
 def handle_migrate(args):
 	'''
 	Handle migrate command execution.
@@ -122,6 +194,16 @@ def handle_migrate(args):
 	'''
 
 	print_json({'applied': migrations.apply_migrations()})
+
+
+def handle_reject_verification(args):
+	'''
+	Handle reject-verification command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(verifications.reject_request(args.request_id, args.admin_user_id, args.reason))
 
 
 def handle_redeem_invite(args):
@@ -139,6 +221,16 @@ def handle_redeem_invite(args):
 	)
 
 	print_json(result)
+
+
+def handle_submit_verification(args):
+	'''
+	Handle submit-verification command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(verifications.create_request(args.user_id, args.type, args.group_id, args.note))
 
 
 def handle_revoke_invite(args):
@@ -166,7 +258,7 @@ def main() -> int:
 
 	try:
 		args.command(args)
-	except invites.InviteError as e:
+	except (invites.InviteError, verifications.VerificationError) as e:
 		print_json({'error': str(e)})
 
 		return 1
