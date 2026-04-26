@@ -8,7 +8,7 @@ import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import invites, migrations, rooms, verifications
+from portal.app import invites, meetings, migrations, rooms, verifications
 
 
 def add_create_invite_parser(subparsers):
@@ -24,6 +24,35 @@ def add_create_invite_parser(subparsers):
 	parser.add_argument('--reusable', action='store_true')
 	parser.add_argument('--ttl-hours', type=int, default=168)
 	parser.set_defaults(command=handle_create_invite)
+
+
+def add_create_meeting_parser(subparsers):
+	'''
+	Add the create-meeting subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('create-meeting')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--allow-guests', action='store_true')
+	parser.add_argument('--name', required=True)
+	parser.add_argument('--room-id')
+	parser.add_argument('--slug', required=True)
+	parser.set_defaults(command=handle_create_meeting)
+
+
+def add_create_meeting_guest_parser(subparsers):
+	'''
+	Add the create-meeting-guest subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('create-meeting-guest')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--display-name', required=True)
+	parser.add_argument('--email')
+	parser.add_argument('--expires-at')
+	parser.add_argument('--meeting-id', required=True)
+	parser.add_argument('--ttl-seconds', type=int)
+	parser.set_defaults(command=handle_create_meeting_guest)
 
 
 def add_add_room_member_parser(subparsers):
@@ -96,6 +125,15 @@ def add_list_rooms_parser(subparsers):
 	parser.set_defaults(command=handle_list_rooms)
 
 
+def add_list_meetings_parser(subparsers):
+	'''
+	Add the list-meetings subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('list-meetings')
+	parser.set_defaults(command=handle_list_meetings)
+
+
 def add_migrate_parser(subparsers):
 	'''
 	Add the migrate subcommand parser.
@@ -153,6 +191,32 @@ def add_redeem_invite_parser(subparsers):
 	parser.set_defaults(command=handle_redeem_invite)
 
 
+def add_issue_meeting_guest_token_parser(subparsers):
+	'''
+	Add the issue-meeting-guest-token subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('issue-meeting-guest-token')
+	parser.add_argument('--guest-id', required=True)
+	parser.add_argument('--issued-by-user-id', required=True)
+	parser.add_argument('--meeting-id', required=True)
+	parser.add_argument('--ttl-seconds', type=int)
+	parser.set_defaults(command=handle_issue_meeting_guest_token)
+
+
+def add_issue_meeting_user_token_parser(subparsers):
+	'''
+	Add the issue-meeting-user-token subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('issue-meeting-user-token')
+	parser.add_argument('--issued-by-user-id')
+	parser.add_argument('--meeting-id', required=True)
+	parser.add_argument('--ttl-seconds', type=int)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_issue_meeting_user_token)
+
+
 def add_remove_room_member_parser(subparsers):
 	'''
 	Add the remove-room-member subcommand parser.
@@ -201,8 +265,13 @@ def build_parser() -> argparse.ArgumentParser:
 	add_can_access_room_parser(subparsers)
 	add_change_room_access_parser(subparsers)
 	add_create_invite_parser(subparsers)
+	add_create_meeting_parser(subparsers)
+	add_create_meeting_guest_parser(subparsers)
 	add_create_room_parser(subparsers)
+	add_issue_meeting_guest_token_parser(subparsers)
+	add_issue_meeting_user_token_parser(subparsers)
 	add_list_invites_parser(subparsers)
+	add_list_meetings_parser(subparsers)
 	add_list_rooms_parser(subparsers)
 	add_list_verifications_parser(subparsers)
 	add_migrate_parser(subparsers)
@@ -265,6 +334,43 @@ def handle_create_invite(args):
 	print_json(invite)
 
 
+def handle_create_meeting(args):
+	'''
+	Handle create-meeting command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(
+		meetings.create_meeting(
+			actor_user_id=args.actor_user_id,
+			allow_guests=args.allow_guests,
+			name=args.name,
+			room_id=args.room_id,
+			slug=args.slug
+		)
+	)
+
+
+def handle_create_meeting_guest(args):
+	'''
+	Handle create-meeting-guest command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	expires_at = meetings.parse_expiration(args.expires_at, args.ttl_seconds)
+	print_json(
+		meetings.create_guest(
+			meeting_id=args.meeting_id,
+			actor_user_id=args.actor_user_id,
+			display_name=args.display_name,
+			email=args.email,
+			expires_at=expires_at
+		)
+	)
+
+
 def handle_create_room(args):
 	'''
 	Handle create-room command execution.
@@ -302,6 +408,16 @@ def handle_list_invites(args):
 	'''
 
 	print_json(invites.list_invites())
+
+
+def handle_list_meetings(args):
+	'''
+	Handle list-meetings command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(meetings.list_meetings())
 
 
 def handle_list_rooms(args):
@@ -361,6 +477,26 @@ def handle_redeem_invite(args):
 	print_json(result)
 
 
+def handle_issue_meeting_guest_token(args):
+	'''
+	Handle issue-meeting-guest-token command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(meetings.issue_guest_token(args.meeting_id, args.guest_id, args.issued_by_user_id, args.ttl_seconds))
+
+
+def handle_issue_meeting_user_token(args):
+	'''
+	Handle issue-meeting-user-token command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(meetings.issue_user_token(args.meeting_id, args.user_id, args.issued_by_user_id, args.ttl_seconds))
+
+
 def handle_remove_room_member(args):
 	'''
 	Handle remove-room-member command execution.
@@ -406,7 +542,7 @@ def main() -> int:
 
 	try:
 		args.command(args)
-	except (invites.InviteError, rooms.RoomAccessError, verifications.VerificationError) as e:
+	except (invites.InviteError, meetings.MeetingAccessError, rooms.RoomAccessError, verifications.VerificationError) as e:
 		print_json({'error': str(e)})
 
 		return 1

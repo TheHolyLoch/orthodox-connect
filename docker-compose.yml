@@ -39,6 +39,12 @@ services:
       POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
       PORTAL_DATABASE_URL: "${PORTAL_DATABASE_URL}"
       PORTAL_SECRET_KEY: "${PORTAL_SECRET_KEY}"
+      JITSI_JWT_APP_ID: "${JITSI_JWT_APP_ID}"
+      JITSI_JWT_APP_SECRET: "${JITSI_JWT_APP_SECRET}"
+      JITSI_MEETING_CREATOR_ROLES: "${JITSI_MEETING_CREATOR_ROLES}"
+      JITSI_PUBLIC_URL: "${JITSI_PUBLIC_URL}"
+      JITSI_TOKEN_TTL_SECONDS: "${JITSI_TOKEN_TTL_SECONDS:-3600}"
+      JITSI_XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
     networks:
       - internal
     depends_on:
@@ -98,18 +104,114 @@ services:
       - prosody
 
   jitsi-web:
-    image: jitsi/web:stable
+    image: "jitsi/web:${JITSI_IMAGE_VERSION:-stable}"
     container_name: orthodox_connect_jitsi_web
     environment:
-      PUBLIC_URL: "https://${MEET_DOMAIN}"
+      AUTH_TYPE: "jwt"
+      DISABLE_HTTPS: "1"
       ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
       ENABLE_GUESTS: "${JITSI_ENABLE_GUESTS:-0}"
-      XMPP_DOMAIN: "${XMPP_DOMAIN}"
+      ENABLE_WELCOME_PAGE: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      JWT_ALLOW_EMPTY: "0"
+      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
+      TZ: "${TZ:-UTC}"
+      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
+      XMPP_BOSH_URL_BASE: "http://jitsi-prosody:5280"
+      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
+      XMPP_GUEST_DOMAIN: "${JITSI_XMPP_GUEST_DOMAIN}"
+      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
+      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
+      XMPP_SERVER: "jitsi-prosody"
     networks:
       - internal
       - video
     volumes:
-      - jitsi_data:/config
+      - jitsi_web_config:/config
+      - ./jitsi/custom-config.js:/config/custom-config.js:ro
+    depends_on:
+      - jitsi-jvb
+
+  jitsi-prosody:
+    image: "jitsi/prosody:${JITSI_IMAGE_VERSION:-stable}"
+    container_name: orthodox_connect_jitsi_prosody
+    environment:
+      AUTH_TYPE: "jwt"
+      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
+      ENABLE_GUESTS: "${JITSI_ENABLE_GUESTS:-0}"
+      ENABLE_S2S: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      JICOFO_AUTH_PASSWORD: "${JITSI_JICOFO_AUTH_PASSWORD}"
+      JVB_AUTH_PASSWORD: "${JITSI_JVB_AUTH_PASSWORD}"
+      JVB_AUTH_USER: "${JITSI_JVB_AUTH_USER:-jvb}"
+      JWT_ACCEPTED_AUDIENCES: "${JITSI_JWT_APP_ID}"
+      JWT_ACCEPTED_ISSUERS: "${JITSI_JWT_APP_ID}"
+      JWT_ALLOW_EMPTY: "0"
+      JWT_APP_ID: "${JITSI_JWT_APP_ID}"
+      JWT_APP_SECRET: "${JITSI_JWT_APP_SECRET}"
+      JWT_AUTH_TYPE: "token"
+      JWT_TOKEN_AUTH_MODULE: "token_verification"
+      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
+      TZ: "${TZ:-UTC}"
+      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
+      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
+      XMPP_GUEST_DOMAIN: "${JITSI_XMPP_GUEST_DOMAIN}"
+      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
+      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
+    networks:
+      - video
+    volumes:
+      - jitsi_prosody_config:/config
+
+  jitsi-jicofo:
+    image: "jitsi/jicofo:${JITSI_IMAGE_VERSION:-stable}"
+    container_name: orthodox_connect_jitsi_jicofo
+    environment:
+      AUTH_TYPE: "jwt"
+      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
+      JICOFO_AUTH_PASSWORD: "${JITSI_JICOFO_AUTH_PASSWORD}"
+      JICOFO_AUTH_TYPE: "internal"
+      JVB_BREWERY_MUC: "${JITSI_JVB_BREWERY_MUC:-jvbbrewery}"
+      TZ: "${TZ:-UTC}"
+      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
+      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
+      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
+      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
+      XMPP_SERVER: "jitsi-prosody"
+    networks:
+      - video
+    volumes:
+      - jitsi_jicofo_config:/config
+    depends_on:
+      - jitsi-prosody
+
+  jitsi-jvb:
+    image: "jitsi/jvb:${JITSI_IMAGE_VERSION:-stable}"
+    container_name: orthodox_connect_jitsi_jvb
+    environment:
+      JVB_AUTH_PASSWORD: "${JITSI_JVB_AUTH_PASSWORD}"
+      JVB_AUTH_USER: "${JITSI_JVB_AUTH_USER:-jvb}"
+      JVB_BREWERY_MUC: "${JITSI_JVB_BREWERY_MUC:-jvbbrewery}"
+      JVB_PORT: "${JITSI_JVB_PORT:-10000}"
+      JVB_XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
+      JVB_XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
+      JVB_XMPP_PORT: "5222"
+      JVB_XMPP_SERVER: "jitsi-prosody"
+      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
+      TZ: "${TZ:-UTC}"
+      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
+      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
+      XMPP_PORT: "5222"
+      XMPP_SERVER: "jitsi-prosody"
+    networks:
+      - public
+      - video
+    ports:
+      - "${JITSI_JVB_PORT:-10000}:${JITSI_JVB_PORT:-10000}/udp"
+    volumes:
+      - jitsi_jvb_config:/config
+    depends_on:
+      - jitsi-prosody
 
 networks:
   public:
@@ -123,6 +225,9 @@ networks:
 volumes:
   postgres_data:
   prosody_data:
-  jitsi_data:
+  jitsi_web_config:
+  jitsi_prosody_config:
+  jitsi_jicofo_config:
+  jitsi_jvb_config:
   reverse_proxy_data:
   reverse_proxy_config:

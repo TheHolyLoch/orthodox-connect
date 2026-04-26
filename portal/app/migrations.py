@@ -59,6 +59,13 @@ def apply_migrations() -> list[str]:
 					)
 					continue
 
+				if migration_path.name == '005_jitsi_meeting_access.sql' and migration_005_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
 				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
 
 				if cursor.fetchone():
@@ -130,3 +137,15 @@ def migration_004_exists(cursor) -> bool:
 	)
 
 	return cursor.fetchone() is not None
+
+
+def migration_005_exists(cursor) -> bool:
+	'''
+	Return whether the Jitsi meeting access migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute("SELECT to_regclass('public.meetings') AS meetings_table")
+
+	return cursor.fetchone()['meetings_table'] is not None
