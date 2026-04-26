@@ -1,0 +1,35 @@
+# Orthodox Connect - Developed by dgm (dgm@tuta.com)
+# orthodox-connect/.gitignore
+
+.env
+logs/
+backups/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.pid
+*.sock
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+build/
+.cache/
+.DS_Store
+data/
+tmp/
+*.bak
+docs/
+AGENTS.md

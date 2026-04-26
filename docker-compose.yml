@@ -1,0 +1,112 @@
+# Orthodox Connect - Developed by dgm (dgm@tuta.com)
+# orthodox-connect/docker-compose.yml
+
+services:
+  reverse-proxy:
+    image: caddy:2-alpine
+    container_name: orthodox_connect_reverse_proxy
+    environment:
+      ROOT_DOMAIN: "${ROOT_DOMAIN}"
+      PORTAL_DOMAIN: "${PORTAL_DOMAIN}"
+      CHAT_DOMAIN: "${CHAT_DOMAIN}"
+      MEET_DOMAIN: "${MEET_DOMAIN}"
+      LIBRARY_DOMAIN: "${LIBRARY_DOMAIN}"
+      ACME_EMAIL: "${ACME_EMAIL:-internal@localhost}"
+    volumes:
+      - ./reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - reverse_proxy_data:/data
+      - reverse_proxy_config:/config
+    networks:
+      - public
+      - internal
+      - xmpp
+      - video
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+
+  portal:
+    image: python:3-slim
+    container_name: orthodox_connect_portal
+    command: ["python3", "-m", "http.server", "8000"]
+    environment:
+      ROOT_DOMAIN: "${ROOT_DOMAIN}"
+      PORTAL_DOMAIN: "${PORTAL_DOMAIN}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      PORTAL_SECRET_KEY: "${PORTAL_SECRET_KEY}"
+    networks:
+      - internal
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: orthodox_connect_postgres
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    networks:
+      - internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  prosody:
+    image: prosody/prosody:latest
+    container_name: orthodox_connect_prosody
+    environment:
+      XMPP_DOMAIN: "${XMPP_DOMAIN}"
+      XMPP_ADMIN_JID: "${XMPP_ADMIN_JID}"
+      XMPP_MUC_DOMAIN: "${XMPP_MUC_DOMAIN}"
+      XMPP_REGISTRATION_ENABLED: "${XMPP_REGISTRATION_ENABLED:-false}"
+    networks:
+      - internal
+      - xmpp
+    volumes:
+      - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+      - prosody_data:/var/lib/prosody
+
+  converse:
+    image: nginx:alpine
+    container_name: orthodox_connect_converse
+    command: ["nginx", "-g", "daemon off;"]
+    environment:
+      CHAT_DOMAIN: "${CHAT_DOMAIN}"
+      XMPP_DOMAIN: "${XMPP_DOMAIN}"
+    networks:
+      - internal
+      - xmpp
+    depends_on:
+      - prosody
+
+  jitsi-web:
+    image: jitsi/web:stable
+    container_name: orthodox_connect_jitsi_web
+    environment:
+      PUBLIC_URL: "https://${MEET_DOMAIN}"
+      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
+      ENABLE_GUESTS: "${JITSI_ENABLE_GUESTS:-0}"
+      XMPP_DOMAIN: "${XMPP_DOMAIN}"
+    networks:
+      - internal
+      - video
+    volumes:
+      - jitsi_data:/config
+
+networks:
+  public:
+  internal:
+    internal: true
+  xmpp:
+    internal: true
+  video:
+    internal: true
+
+volumes:
+  postgres_data:
+  prosody_data:
+  jitsi_data:
+  reverse_proxy_data:
+  reverse_proxy_config:

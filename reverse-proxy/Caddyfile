@@ -1,0 +1,31 @@
+# Orthodox Connect - Developed by dgm (dgm@tuta.com)
+# orthodox-connect/reverse-proxy/Caddyfile
+
+{
+	email {$ACME_EMAIL:internal@localhost}
+}
+
+{$PORTAL_DOMAIN} {
+	reverse_proxy portal:8000
+}
+
+{$CHAT_DOMAIN} {
+	@xmpp_websocket path /xmpp-websocket /xmpp-websocket/*
+	reverse_proxy @xmpp_websocket prosody:5280
+
+	@xmpp_bosh path /http-bind /http-bind/*
+	reverse_proxy @xmpp_bosh prosody:5280
+
+	reverse_proxy converse:80
+}
+
+{$MEET_DOMAIN} {
+	@jitsi_websocket path /xmpp-websocket /xmpp-websocket/* /colibri-ws/* /conference-request/v1
+	reverse_proxy @jitsi_websocket jitsi-web:80
+
+	reverse_proxy jitsi-web:80
+}
+
+{$LIBRARY_DOMAIN} {
+	respond "Orthodox Connect library service is not enabled yet." 503
+}

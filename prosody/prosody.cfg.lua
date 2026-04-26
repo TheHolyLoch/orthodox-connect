@@ -1,0 +1,69 @@
+-- Orthodox Connect - Developed by dgm (dgm@tuta.com)
+-- orthodox-connect/prosody/prosody.cfg.lua
+
+local xmpp_domain                = assert(os.getenv('XMPP_DOMAIN'), 'missing XMPP_DOMAIN')
+local xmpp_admin_jid             = assert(os.getenv('XMPP_ADMIN_JID'), 'missing XMPP_ADMIN_JID')
+local xmpp_muc_domain            = assert(os.getenv('XMPP_MUC_DOMAIN'), 'missing XMPP_MUC_DOMAIN')
+local xmpp_registration_enabled  = os.getenv('XMPP_REGISTRATION_ENABLED') or 'false'
+
+if xmpp_registration_enabled ~= 'false' then
+	error('XMPP_REGISTRATION_ENABLED must remain false for the MVP')
+end
+
+admins = { xmpp_admin_jid }
+
+daemonize = false
+pidfile   = '/var/run/prosody/prosody.pid'
+
+data_path = '/var/lib/prosody'
+
+modules_enabled = {
+	'roster';
+	'saslauth';
+	'disco';
+	'carbons';
+	'pep';
+	'private';
+	'blocklist';
+	'vcard4';
+	'vcard_legacy';
+	'version';
+	'uptime';
+	'time';
+	'ping';
+	'bosh';
+	'websocket';
+	'admin_adhoc';
+}
+
+modules_disabled = {
+	's2s';
+	'register';
+}
+
+allow_registration = false
+
+c2s_require_encryption = false
+s2s_require_encryption = true
+
+authentication = 'internal_hashed'
+storage        = 'internal'
+
+http_host   = xmpp_domain
+http_ports  = { 5280 }
+https_ports = { }
+
+log = {
+	{ levels = { min = 'info' }, to = 'console' };
+}
+
+VirtualHost(xmpp_domain)
+	enabled            = true
+	allow_registration = false
+
+Component(xmpp_muc_domain, 'muc')
+	name                     = 'Orthodox Connect Group Chats'
+	restrict_room_creation   = 'admin'
+	modules_enabled          = {
+		'muc_mam';
+	}
