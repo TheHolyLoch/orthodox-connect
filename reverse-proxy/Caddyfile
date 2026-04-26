@@ -5,11 +5,48 @@
 	email {$ACME_EMAIL:internal@localhost}
 }
 
+(portal_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+(chat_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+(meet_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), microphone=(self), fullscreen=(self), geolocation=()"
+		-Server
+	}
+}
+
 {$PORTAL_DOMAIN} {
+	import portal_headers
+
 	reverse_proxy portal:8000
 }
 
 {$CHAT_DOMAIN} {
+	import chat_headers
+
 	@xmpp_websocket path /xmpp-websocket /xmpp-websocket/*
 	reverse_proxy @xmpp_websocket prosody:5280
 
@@ -20,6 +57,8 @@
 }
 
 {$MEET_DOMAIN} {
+	import meet_headers
+
 	@jitsi_websocket path /xmpp-websocket /xmpp-websocket/* /colibri-ws/* /conference-request/v1
 	reverse_proxy @jitsi_websocket jitsi-web:80
 
@@ -27,5 +66,7 @@
 }
 
 {$LIBRARY_DOMAIN} {
+	import portal_headers
+
 	respond "Orthodox Connect library service is not enabled yet." 503
 }
