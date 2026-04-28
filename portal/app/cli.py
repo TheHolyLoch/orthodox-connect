@@ -22,6 +22,7 @@ def add_create_invite_parser(subparsers):
 	parser.add_argument('--expected-role-id')
 	parser.add_argument('--expires-at')
 	parser.add_argument('--group-id')
+	parser.add_argument('--max-uses', type=int, default=1)
 	parser.add_argument('--reusable', action='store_true')
 	parser.add_argument('--ttl-hours', type=int, default=168)
 	parser.set_defaults(command=handle_create_invite)
@@ -198,9 +199,9 @@ def add_redeem_invite_parser(subparsers):
 
 	parser = subparsers.add_parser('redeem-invite')
 	parser.add_argument('--display-name', required=True)
-	parser.add_argument('--email')
+	parser.add_argument('--email', required=True)
+	parser.add_argument('--password', required=True)
 	parser.add_argument('--token', required=True)
-	parser.add_argument('--xmpp-jid')
 	parser.set_defaults(command=handle_redeem_invite)
 
 
@@ -356,6 +357,7 @@ def handle_create_invite(args):
 		expected_role_id=args.expected_role_id,
 		expires_at=expires_at,
 		group_id=args.group_id,
+		max_uses=args.max_uses,
 		reusable=args.reusable
 	)
 
@@ -498,8 +500,8 @@ def handle_redeem_invite(args):
 	result = invites.redeem_invite(
 		display_name=args.display_name,
 		email=args.email,
+		password=args.password,
 		token=args.token,
-		xmpp_jid=args.xmpp_jid
 	)
 
 	print_json(result)

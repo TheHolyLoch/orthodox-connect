@@ -5,9 +5,9 @@ import hashlib
 import json
 import secrets
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from portal.app import config, db
+from portal.app import auth, config, db, rooms
 
 
 class InviteError(Exception):
@@ -16,6 +16,10 @@ class InviteError(Exception):
 
 class InviteExpiredError(InviteError):
 	'''Raised when an invite has expired.'''
+
+
+class InviteInputError(InviteError):
+	'''Raised when invite input is invalid.'''
 
 
 class InviteRedeemedError(InviteError):
@@ -30,11 +34,16 @@ class InviteUnknownError(InviteError):
 	'''Raised when an invite token cannot be found.'''
 
 
+class InviteUnauthorizedError(InviteError):
+	'''Raised when an actor cannot manage invites.'''
+
+
 def create_invite(
 	created_by_user_id: str,
 	expires_at: datetime,
 	expected_role_id: str | None = None,
 	group_id: str | None = None,
+	max_uses: int = 1,
 	reusable: bool = False
 ) -> dict:
 	'''
@@ -44,14 +53,17 @@ def create_invite(
 	:param expires_at: Expiration timestamp
 	:param expected_role_id: Optional expected role ID
 	:param group_id: Optional group scope ID
+	:param max_uses: Maximum number of successful redemptions
 	:param reusable: Whether the invite may be redeemed more than once
 	'''
 
+	validate_max_uses(max_uses)
 	token      = secrets.token_urlsafe(config.invite_token_bytes())
 	token_hash = hash_token(token)
 
 	with db.connect_database() as connection:
 		with connection.cursor() as cursor:
+			require_admin(cursor, created_by_user_id)
 			cursor.execute(
 				'''
 				INSERT INTO invites (
@@ -60,9 +72,10 @@ def create_invite(
 					group_id,
 					expected_role_id,
 					expires_at,
+					max_uses,
 					reusable
 				)
-				VALUES (%s, %s, %s, %s, %s, %s)
+				VALUES (%s, %s, %s, %s, %s, %s, %s)
 				RETURNING
 					id,
 					created_by_user_id,
@@ -70,12 +83,15 @@ def create_invite(
 					expected_role_id,
 					status,
 					expires_at,
+					max_uses,
 					reusable,
 					use_count,
+					used_at,
+					revoked_at,
 					created_at,
 					updated_at
 				''',
-				(token_hash, created_by_user_id, group_id, expected_role_id, expires_at, reusable)
+				(token_hash, created_by_user_id, group_id, expected_role_id, expires_at, max_uses, reusable)
 			)
 			invite = cursor.fetchone()
 
@@ -95,7 +111,7 @@ def create_invite(
 					created_by_user_id,
 					invite['id'],
 					group_id,
-					json.dumps({'reusable': reusable, 'expires_at': expires_at.isoformat()})
+					json.dumps({'expires_at': expires_at.isoformat(), 'max_uses': max_uses, 'reusable': reusable})
 				)
 			)
 
@@ -132,10 +148,13 @@ def list_invites() -> list[dict]:
 					expected_role_id,
 					status,
 					expires_at,
+					max_uses,
 					reusable,
 					use_count,
 					accepted_by_user_id,
 					accepted_at,
+					used_at,
+					revoked_at,
 					created_at,
 					updated_at
 				FROM invites
@@ -146,15 +165,31 @@ def list_invites() -> list[dict]:
 			return cursor.fetchall()
 
 
-def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_jid: str | None = None) -> dict:
+def redeem_invite(token: str, display_name: str, email: str, password: str) -> dict:
 	'''
 	Redeem a valid invite and create a pending user.
 
 	:param token: Raw invite token
 	:param display_name: Display name for the pending account
-	:param email: Optional account email
-	:param xmpp_jid: Optional planned XMPP JID
+	:param email: Account email
+	:param password: Plain account password
 	'''
+
+	display_name = display_name.strip()
+	email        = auth.normalize_email(email)
+	token        = token.strip()
+
+	if not token:
+		raise InviteUnknownError('invite token not found')
+
+	if not display_name:
+		raise InviteInputError('display name is required')
+
+	if not email:
+		raise InviteInputError('email is required')
+
+	if not password:
+		raise InviteInputError('password is required')
 
 	token_hash = hash_token(token)
 
@@ -170,7 +205,9 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 					status,
 					expires_at,
 					reusable,
-					use_count
+					use_count,
+					max_uses,
+					revoked_at
 				FROM invites
 				WHERE token_hash = %s
 				FOR UPDATE
@@ -182,7 +219,7 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 			if not invite:
 				raise InviteUnknownError('invite token not found')
 
-			if invite['status'] == 'revoked':
+			if invite['status'] == 'revoked' or invite['revoked_at']:
 				raise InviteRevokedError('invite has been revoked')
 
 			if invite['expires_at'] <= datetime.now(timezone.utc):
@@ -195,15 +232,20 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 
 				raise InviteExpiredError('invite has expired')
 
-			if invite['status'] == 'accepted' and not invite['reusable']:
+			if invite['status'] == 'accepted' or invite['use_count'] >= invite['max_uses']:
 				raise InviteRedeemedError('invite has already been redeemed')
+
+			cursor.execute('SELECT id FROM users WHERE email = %s', (email,))
+
+			if cursor.fetchone():
+				raise InviteInputError('email already has an account')
 
 			cursor.execute(
 				'''
 				INSERT INTO users (
-					xmpp_jid,
 					display_name,
 					email,
+					password_hash,
 					status
 				)
 				VALUES (%s, %s, %s, 'pending')
@@ -216,7 +258,7 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 					created_at,
 					updated_at
 				''',
-				(xmpp_jid, display_name, email)
+				(display_name, email, auth.hash_password(password))
 			)
 			user = cursor.fetchone()
 
@@ -238,19 +280,23 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 				'''
 				UPDATE invites
 				SET
-					status = CASE WHEN reusable THEN status ELSE 'accepted' END,
-					accepted_by_user_id = %s,
-					accepted_at = now(),
+					status = CASE WHEN use_count + 1 >= max_uses THEN 'accepted' ELSE status END,
+					accepted_by_user_id = COALESCE(accepted_by_user_id, %s),
+					accepted_at = COALESCE(accepted_at, now()),
 					use_count = use_count + 1,
+					used_at = now(),
 					updated_at = now()
 				WHERE id = %s
 				RETURNING
 					id,
 					status,
+					max_uses,
 					reusable,
 					use_count,
 					accepted_by_user_id,
-					accepted_at
+					accepted_at,
+					used_at,
+					revoked_at
 				''',
 				(user['id'], invite['id'])
 			)
@@ -270,11 +316,15 @@ def redeem_invite(token: str, display_name: str, email: str | None = None, xmpp_
 				VALUES (%s, %s, 'invite', %s, 'invite_redeemed', %s, %s::jsonb)
 				''',
 				(
-					invite['created_by_user_id'],
+					user['id'],
 					user['id'],
 					invite['id'],
 					invite['group_id'],
-					json.dumps({'reusable': invite['reusable']})
+					json.dumps({
+						'created_by_user_id': str(invite['created_by_user_id']) if invite['created_by_user_id'] else None,
+						'max_uses': invite['max_uses'],
+						'reusable': invite['reusable']
+					})
 				)
 			)
 
@@ -293,11 +343,13 @@ def revoke_invite(invite_id: str, actor_user_id: str) -> dict:
 
 	with db.connect_database() as connection:
 		with connection.cursor() as cursor:
+			require_admin(cursor, actor_user_id)
 			cursor.execute(
 				'''
 				UPDATE invites
 				SET
 					status = 'revoked',
+					revoked_at = now(),
 					updated_at = now()
 				WHERE id = %s
 					AND status NOT IN ('accepted', 'expired', 'revoked')
@@ -308,8 +360,11 @@ def revoke_invite(invite_id: str, actor_user_id: str) -> dict:
 					expected_role_id,
 					status,
 					expires_at,
+					max_uses,
 					reusable,
 					use_count,
+					used_at,
+					revoked_at,
 					created_at,
 					updated_at
 				''',
@@ -338,3 +393,31 @@ def revoke_invite(invite_id: str, actor_user_id: str) -> dict:
 		connection.commit()
 
 	return invite
+
+
+def require_admin(cursor, actor_user_id: str):
+	'''
+	Require an approved admin actor for invite management.
+
+	:param cursor: Open database cursor
+	:param actor_user_id: Acting user ID
+	'''
+
+	user = rooms.fetch_user(cursor, actor_user_id)
+
+	if not user or user['status'] != 'approved':
+		raise InviteUnauthorizedError('admin user is required')
+
+	if not rooms.has_any_scoped_role(cursor, actor_user_id, rooms.ADMIN_ROLES):
+		raise InviteUnauthorizedError('admin role is required')
+
+
+def validate_max_uses(max_uses: int):
+	'''
+	Validate invite maximum use count.
+
+	:param max_uses: Maximum redemption count
+	'''
+
+	if max_uses < 1:
+		raise InviteInputError('max uses must be at least 1')

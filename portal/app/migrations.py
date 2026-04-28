@@ -73,6 +73,13 @@ def apply_migrations() -> list[str]:
 					)
 					continue
 
+				if migration_path.name == '007_invite_onboarding.sql' and migration_007_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
 				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
 
 				if cursor.fetchone():
@@ -172,6 +179,26 @@ def migration_006_exists(cursor) -> bool:
 		WHERE table_schema = 'public'
 			AND table_name = 'users'
 			AND column_name = 'password_hash'
+		'''
+	)
+
+	return cursor.fetchone() is not None
+
+
+def migration_007_exists(cursor) -> bool:
+	'''
+	Return whether the invite onboarding migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute(
+		'''
+		SELECT 1
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'invites'
+			AND column_name = 'max_uses'
 		'''
 	)
 

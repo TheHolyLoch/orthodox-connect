@@ -48,6 +48,11 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 			return
 
+		if route == '/invite':
+			self.send_html(render_invite_redeem_page(single_value(query, 'token')))
+
+			return
+
 		if route == '/logout':
 			self.redirect('/login?message=Signed%20out', clear_session=True)
 
@@ -85,6 +90,11 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 		if route == '/logout':
 			self.redirect('/login?message=Signed%20out', clear_session=True)
+
+			return
+
+		if route == '/invite/redeem':
+			self.handle_invite_redemption(form)
 
 			return
 
@@ -148,6 +158,27 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		self.send_header('Location', '/admin')
 		self.send_header('Set-Cookie', session_cookie(result['session']))
 		self.end_headers()
+
+	def handle_invite_redemption(self, form: dict):
+		'''
+		Handle public invite redemption.
+
+		:param form: Parsed form data
+		'''
+
+		try:
+			invites.redeem_invite(
+				display_name=single_value(form, 'display_name'),
+				email=single_value(form, 'email'),
+				password=single_value(form, 'password'),
+				token=single_value(form, 'token')
+			)
+		except invites.InviteError as error:
+			self.send_html(render_invite_redeem_page(single_value(form, 'token'), f'Error: {error}'), status_code=400)
+
+			return
+
+		self.send_html(render_invite_redeem_page('', 'Account created and pending administrator approval.'))
 
 	def log_message(self, format, *args):
 		'''Keep request logs minimal for local operation.'''
@@ -439,13 +470,19 @@ def handle_create_invite(form: dict, actor_id: str | None) -> dict:
 
 	ttl_hours  = int(single_value(form, 'ttl_hours') or '168')
 	expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+	max_uses   = int(single_value(form, 'max_uses') or '1')
+	reusable   = single_value(form, 'reusable') == 'on'
+
+	if reusable and max_uses < 2:
+		raise AdminUiError('reusable invites must allow at least 2 uses')
 
 	return invites.create_invite(
 		created_by_user_id=actor_id,
 		expected_role_id=optional_value(form, 'expected_role_id'),
 		expires_at=expires_at,
 		group_id=optional_value(form, 'group_id'),
-		reusable=single_value(form, 'reusable') == 'on'
+		max_uses=max_uses,
+		reusable=reusable
 	)
 
 
@@ -562,10 +599,13 @@ def list_invites(cursor) -> list[dict]:
 			expected_role_id,
 			status,
 			expires_at,
+			max_uses,
 			reusable,
 			use_count,
 			accepted_by_user_id,
 			accepted_at,
+			used_at,
+			revoked_at,
 			created_at,
 			updated_at
 		FROM invites
@@ -889,6 +929,10 @@ def render_invite_management(actor_id: str | None, state: dict) -> str:
 				<label for="ttl_hours">Expires after hours</label>
 				<input id="ttl_hours" name="ttl_hours" type="number" min="1" value="168">
 			</div>
+			<div class="field">
+				<label for="max_uses">Maximum uses</label>
+				<input id="max_uses" name="max_uses" type="number" min="1" value="1">
+			</div>
 			<div class="field checkbox">
 				<input id="reusable" name="reusable" type="checkbox">
 				<label for="reusable">Reusable invite</label>
@@ -896,9 +940,69 @@ def render_invite_management(actor_id: str | None, state: dict) -> str:
 			<button type="submit">Create Invite</button>
 		</form>
 	</div>
-	{render_table('', rows, ['status', 'expires_at', 'reusable', 'use_count', 'group_id', 'expected_role_id', 'created_by_user_id', 'accepted_by_user_id', 'action'])}
+	{render_table('', rows, ['status', 'expires_at', 'max_uses', 'reusable', 'use_count', 'used_at', 'revoked_at', 'group_id', 'expected_role_id', 'created_by_user_id', 'accepted_by_user_id', 'action'])}
 </section>
 '''
+
+
+def render_invite_redeem_page(token: str | None = None, message: str | None = None) -> str:
+	'''
+	Return the invite redemption page.
+
+	:param token: Optional invite token
+	:param message: Optional status message
+	'''
+
+	token_value = escape(token or '')
+	content     = [
+		'<!doctype html>',
+		'<html lang="en">',
+		'<head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		'<title>Orthodox Connect Invite</title>',
+		'<link rel="stylesheet" href="/admin.css">',
+		'</head>',
+		'<body>',
+		'<header><h1>Orthodox Connect</h1><p>Invite-only account setup</p></header>',
+		'<main>',
+	]
+
+	if message:
+		class_name = 'message error' if message.startswith('Error:') else 'message'
+		content.append(f'<section class="{class_name}">{escape(message)}</section>')
+
+	content.append(
+		f'''
+<section>
+	<form class="login" method="post" action="/invite/redeem">
+		<div class="field">
+			<label for="token">Invite token</label>
+			<input id="token" name="token" type="text" value="{token_value}" autocomplete="off" required>
+		</div>
+		<div class="field">
+			<label for="display_name">Display name</label>
+			<input id="display_name" name="display_name" type="text" autocomplete="name" required>
+		</div>
+		<div class="field">
+			<label for="email">Email</label>
+			<input id="email" name="email" type="email" autocomplete="username" required>
+		</div>
+		<div class="field">
+			<label for="password">Password</label>
+			<input id="password" name="password" type="password" autocomplete="new-password" required>
+		</div>
+		<div class="field">
+			<label>&nbsp;</label>
+			<button type="submit">Create Account</button>
+		</div>
+	</form>
+</section>
+'''
+	)
+	content.extend(['</main>', '</body>', '</html>'])
+
+	return '\n'.join(content)
 
 
 def render_roles(roles: list[dict]) -> str:
