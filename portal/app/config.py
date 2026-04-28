@@ -65,6 +65,22 @@ def invite_token_bytes() -> int:
 	return int(os.getenv('PORTAL_INVITE_TOKEN_BYTES', '32'))
 
 
+def portal_secret_key() -> str:
+	'''
+	Return the portal session signing secret.
+	'''
+
+	return env_or_file('PORTAL_SECRET_KEY')
+
+
+def portal_session_ttl_seconds() -> int:
+	'''
+	Return the portal session lifetime in seconds.
+	'''
+
+	return int(os.getenv('PORTAL_SESSION_TTL_SECONDS', '28800'))
+
+
 def jitsi_jwt_app_id() -> str:
 	'''
 	Return the Jitsi JWT application identifier.

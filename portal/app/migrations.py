@@ -66,6 +66,13 @@ def apply_migrations() -> list[str]:
 					)
 					continue
 
+				if migration_path.name == '006_portal_authentication.sql' and migration_006_exists(cursor):
+					cursor.execute(
+						'INSERT INTO schema_migrations (filename) VALUES (%s) ON CONFLICT (filename) DO NOTHING',
+						(migration_path.name,)
+					)
+					continue
+
 				cursor.execute('SELECT 1 FROM schema_migrations WHERE filename = %s', (migration_path.name,))
 
 				if cursor.fetchone():
@@ -149,3 +156,23 @@ def migration_005_exists(cursor) -> bool:
 	cursor.execute("SELECT to_regclass('public.meetings') AS meetings_table")
 
 	return cursor.fetchone()['meetings_table'] is not None
+
+
+def migration_006_exists(cursor) -> bool:
+	'''
+	Return whether the portal authentication migration is already applied.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute(
+		'''
+		SELECT 1
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'users'
+			AND column_name = 'password_hash'
+		'''
+	)
+
+	return cursor.fetchone() is not None

@@ -3,6 +3,7 @@
 # orthodox-connect/portal/app/admin.py
 
 import html
+import http.cookies
 import json
 import os
 import urllib.parse
@@ -10,7 +11,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from portal.app import db, invites, rooms, verifications
+from portal.app import auth, config, db, invites, rooms, verifications
 
 
 ADMIN_ROLES = rooms.ADMIN_ROLES
@@ -42,19 +43,59 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 			return
 
-		if route not in ('/', '/admin'):
+		if route == '/login':
+			self.send_html(render_login_page(single_value(query, 'message')))
+
+			return
+
+		if route == '/logout':
+			self.redirect('/login?message=Signed%20out', clear_session=True)
+
+			return
+
+		if route == '/':
+			self.redirect('/admin')
+
+			return
+
+		if route != '/admin':
 			self.send_error(404)
 
 			return
 
-		self.send_html(render_admin_page(query))
+		current_user = self.current_admin_user()
+
+		if not current_user:
+			self.redirect('/login')
+
+			return
+
+		self.send_html(render_admin_page(current_user, query))
 
 	def do_POST(self):
 		'''Handle admin UI POST actions.'''
 
 		route, query = parse_request_path(self.path)
 		form         = parse_form(self)
-		actor_id     = single_value(form, 'actor_user_id') or single_value(query, 'actor_user_id')
+
+		if route == '/login':
+			self.handle_login(form)
+
+			return
+
+		if route == '/logout':
+			self.redirect('/login?message=Signed%20out', clear_session=True)
+
+			return
+
+		current_user = self.current_admin_user()
+
+		if not current_user:
+			self.redirect('/login')
+
+			return
+
+		actor_id = str(current_user['id'])
 
 		try:
 			if route == '/admin/invites/create':
@@ -76,7 +117,37 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		except (AdminUiError, invites.InviteError, verifications.VerificationError) as error:
 			message = f'Error: {error}'
 
-		self.send_html(render_admin_page({'actor_user_id': [actor_id or ''], 'message': [message]}))
+		self.send_html(render_admin_page(current_user, {'message': [message]}))
+
+	def current_admin_user(self) -> dict | None:
+		'''Return the authenticated admin user for the current request.'''
+
+		cookie_header = self.headers.get('Cookie', '')
+		cookies       = http.cookies.SimpleCookie(cookie_header)
+		session       = cookies.get(auth.SESSION_COOKIE)
+
+		return auth.load_session_user(session.value if session else None)
+
+	def handle_login(self, form: dict):
+		'''
+		Handle admin login form submission.
+
+		:param form: Parsed form data
+		'''
+
+		email    = single_value(form, 'email')
+		password = single_value(form, 'password')
+		result   = auth.login(email, password, self.client_address[0] if self.client_address else '')
+
+		if not result:
+			self.send_html(render_login_page('Login failed.'), status_code=401)
+
+			return
+
+		self.send_response(303)
+		self.send_header('Location', '/admin')
+		self.send_header('Set-Cookie', session_cookie(result['session']))
+		self.end_headers()
 
 	def log_message(self, format, *args):
 		'''Keep request logs minimal for local operation.'''
@@ -91,13 +162,30 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		self.end_headers()
 		self.wfile.write(admin_css().encode('utf-8'))
 
-	def send_html(self, body: str):
+	def redirect(self, location: str, clear_session: bool = False):
+		'''
+		Send a redirect response.
+
+		:param location: Redirect target
+		:param clear_session: Whether to clear the session cookie
+		'''
+
+		self.send_response(303)
+		self.send_header('Location', location)
+
+		if clear_session:
+			self.send_header('Set-Cookie', f'{auth.SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+
+		self.end_headers()
+
+	def send_html(self, body: str, status_code: int = 200):
 		'''Send an HTML response.
 
 		:param body: Response body
+		:param status_code: HTTP status code
 		'''
 
-		self.send_response(200)
+		self.send_response(status_code)
 		self.send_header('Content-Type', 'text/html; charset=utf-8')
 		self.end_headers()
 		self.wfile.write(body.encode('utf-8'))
@@ -208,6 +296,7 @@ h2 {
 }
 
 .actor,
+.login,
 .message {
 	display: grid;
 	gap: 0.75rem;
@@ -289,19 +378,6 @@ th {
 	word-break: break-all;
 }
 '''
-
-
-def admin_home_url(actor_id: str | None = None) -> str:
-	'''
-	Return the admin home URL with actor context.
-
-	:param actor_id: Optional acting admin user ID
-	'''
-
-	if not actor_id:
-		return '/admin'
-
-	return f'/admin?actor_user_id={urllib.parse.quote(actor_id)}'
 
 
 def fetch_admin_state(actor_id: str | None) -> dict:
@@ -395,16 +471,6 @@ def handle_revoke_invite(form: dict, actor_id: str | None):
 
 	require_admin(actor_id)
 	invites.revoke_invite(single_value(form, 'invite_id'), actor_id)
-
-
-def hidden_actor(actor_id: str | None) -> str:
-	'''
-	Return hidden actor input markup.
-
-	:param actor_id: Acting admin user ID
-	'''
-
-	return f'<input type="hidden" name="actor_user_id" value="{escape(actor_id or "")}">'
 
 
 def is_admin(cursor, actor_id: str | None) -> bool:
@@ -640,37 +706,32 @@ def parse_request_path(path: str) -> tuple[str, dict]:
 	return parsed.path, urllib.parse.parse_qs(parsed.query)
 
 
-def render_actor_form(actor_id: str | None) -> str:
+def render_admin_session(current_user: dict) -> str:
 	'''
-	Return actor selector form markup.
+	Return current admin session markup.
 
-	:param actor_id: Current acting admin user ID
+	:param current_user: Authenticated admin user
 	'''
 
 	return f'''
 <section>
-	<form class="actor" method="get" action="/admin">
-		<div class="field">
-			<label for="actor_user_id">Acting admin user ID</label>
-			<input id="actor_user_id" name="actor_user_id" value="{escape(actor_id or '')}" placeholder="approved admin user UUID">
-		</div>
-		<div class="field">
-			<label>&nbsp;</label>
-			<button type="submit">Load Admin UI</button>
-		</div>
+	<form class="actor" method="post" action="/logout">
+		<p><strong>{escape(current_user['display_name'])}</strong><br><span class="muted">{escape(current_user['email'] or '')}</span></p>
+		<button class="secondary" type="submit">Logout</button>
 	</form>
 </section>
 '''
 
 
-def render_admin_page(query: dict) -> str:
+def render_admin_page(current_user: dict, query: dict) -> str:
 	'''
 	Return the admin UI HTML.
 
+	:param current_user: Authenticated admin user
 	:param query: Parsed query data
 	'''
 
-	actor_id = single_value(query, 'actor_user_id')
+	actor_id = str(current_user['id'])
 	message  = single_value(query, 'message')
 	state    = fetch_admin_state(actor_id)
 	content  = [
@@ -685,7 +746,7 @@ def render_admin_page(query: dict) -> str:
 		'<body>',
 		'<header><h1>Orthodox Connect Admin</h1><p>Invite, verification, room, and audit workflow</p></header>',
 		'<main>',
-		render_actor_form(actor_id),
+		render_admin_session(current_user),
 	]
 
 	if message:
@@ -734,6 +795,56 @@ def render_groups(groups: list[dict]) -> str:
 	return render_table('Groups and Parishes', groups, ['name', 'slug', 'group_type', 'parent_group_id', 'description', 'created_at'])
 
 
+def render_login_page(message: str | None = None) -> str:
+	'''
+	Return the admin login page.
+
+	:param message: Optional status message
+	'''
+
+	content = [
+		'<!doctype html>',
+		'<html lang="en">',
+		'<head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		'<title>Orthodox Connect Login</title>',
+		'<link rel="stylesheet" href="/admin.css">',
+		'</head>',
+		'<body>',
+		'<header><h1>Orthodox Connect Admin</h1><p>Local portal login</p></header>',
+		'<main>',
+	]
+
+	if message:
+		class_name = 'message error' if 'failed' in message.lower() else 'message'
+		content.append(f'<section class="{class_name}">{escape(message)}</section>')
+
+	content.append(
+		'''
+<section>
+	<form class="login" method="post" action="/login">
+		<div class="field">
+			<label for="email">Email</label>
+			<input id="email" name="email" type="email" autocomplete="username" required>
+		</div>
+		<div class="field">
+			<label for="password">Password</label>
+			<input id="password" name="password" type="password" autocomplete="current-password" required>
+		</div>
+		<div class="field">
+			<label>&nbsp;</label>
+			<button type="submit">Login</button>
+		</div>
+	</form>
+</section>
+'''
+	)
+	content.extend(['</main>', '</body>', '</html>'])
+
+	return '\n'.join(content)
+
+
 def render_invite_management(actor_id: str | None, state: dict) -> str:
 	'''
 	Return invite management section markup.
@@ -752,7 +863,6 @@ def render_invite_management(actor_id: str | None, state: dict) -> str:
 		if invite['status'] == 'unused':
 			action = f'''
 <form class="inline" method="post" action="/admin/invites/revoke">
-	{hidden_actor(actor_id)}
 	<input type="hidden" name="invite_id" value="{escape(invite['id'])}">
 	<button class="secondary" type="submit">Revoke</button>
 </form>
@@ -767,7 +877,6 @@ def render_invite_management(actor_id: str | None, state: dict) -> str:
 	<h2>Invites</h2>
 	<div class="forms">
 		<form method="post" action="/admin/invites/create">
-			{hidden_actor(actor_id)}
 			<div class="field">
 				<label for="group_id">Group scope</label>
 				<select id="group_id" name="group_id"><option value="">No group scope</option>{group_options}</select>
@@ -878,12 +987,10 @@ def render_verification_management(actor_id: str | None, state: dict) -> str:
 		if request['status'] == 'pending':
 			action = f'''
 <form class="inline" method="post" action="/admin/verifications/approve">
-	{hidden_actor(actor_id)}
 	<input type="hidden" name="request_id" value="{escape(request['id'])}">
 	<button type="submit">Approve</button>
 </form>
 <form class="inline" method="post" action="/admin/verifications/reject">
-	{hidden_actor(actor_id)}
 	<input type="hidden" name="request_id" value="{escape(request['id'])}">
 	<input name="reason" placeholder="Rejection reason" required>
 	<button class="secondary" type="submit">Reject</button>
@@ -935,6 +1042,18 @@ def require_admin(actor_id: str | None):
 		with connection.cursor() as cursor:
 			if not is_admin(cursor, actor_id):
 				raise AdminAuthorizationError('admin role required')
+
+
+def session_cookie(session_token: str) -> str:
+	'''
+	Return the portal session cookie header value.
+
+	:param session_token: Signed session token
+	'''
+
+	max_age = str(config.portal_session_ttl_seconds())
+
+	return f'{auth.SESSION_COOKIE}={session_token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={max_age}'
 
 
 def single_value(values: dict, name: str) -> str:

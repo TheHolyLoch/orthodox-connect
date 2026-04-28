@@ -4,11 +4,12 @@
 
 import argparse
 import json
+import os
 import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import invites, meetings, migrations, rooms, verifications
+from portal.app import auth, invites, meetings, migrations, rooms, verifications
 
 
 def add_create_invite_parser(subparsers):
@@ -77,6 +78,18 @@ def add_can_access_room_parser(subparsers):
 	parser.add_argument('--room-id', required=True)
 	parser.add_argument('--user-id', required=True)
 	parser.set_defaults(command=handle_can_access_room)
+
+
+def add_bootstrap_admin_parser(subparsers):
+	'''
+	Add the bootstrap-admin subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('bootstrap-admin')
+	parser.add_argument('--display-name')
+	parser.add_argument('--email')
+	parser.add_argument('--password')
+	parser.set_defaults(command=handle_bootstrap_admin)
 
 
 def add_create_room_parser(subparsers):
@@ -262,6 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
 	subparsers = parser.add_subparsers(dest='command_name')
 
 	add_add_room_member_parser(subparsers)
+	add_bootstrap_admin_parser(subparsers)
 	add_can_access_room_parser(subparsers)
 	add_change_room_access_parser(subparsers)
 	add_create_invite_parser(subparsers)
@@ -293,6 +307,20 @@ def handle_add_room_member(args):
 	'''
 
 	print_json(rooms.add_room_membership(args.room_id, args.user_id, args.actor_user_id, args.role))
+
+
+def handle_bootstrap_admin(args):
+	'''
+	Handle bootstrap-admin command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	email        = args.email or os.getenv('PORTAL_BOOTSTRAP_ADMIN_EMAIL', '')
+	display_name = args.display_name or os.getenv('PORTAL_BOOTSTRAP_ADMIN_DISPLAY_NAME', '')
+	password     = args.password or os.getenv('PORTAL_BOOTSTRAP_ADMIN_PASSWORD', '')
+
+	print_json(auth.bootstrap_admin(email, display_name, password))
 
 
 def handle_can_access_room(args):
@@ -542,7 +570,7 @@ def main() -> int:
 
 	try:
 		args.command(args)
-	except (invites.InviteError, meetings.MeetingAccessError, rooms.RoomAccessError, verifications.VerificationError) as e:
+	except (auth.AuthError, invites.InviteError, meetings.MeetingAccessError, rooms.RoomAccessError, verifications.VerificationError) as e:
 		print_json({'error': str(e)})
 
 		return 1
