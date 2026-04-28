@@ -1,6 +1,6 @@
 # Orthodox Connect
 
-Orthodox Connect is a self-hosted communications stack for Orthodox parishes, clergy, monastics, and laity. It combines a Caddy reverse proxy, Prosody XMPP, Converse.js web chat, Jitsi Meet, PostgreSQL, and a small portal for invites, verification, rooms, meetings, audit records, and local backups.
+Orthodox Connect is a self-hosted communications stack for Orthodox parishes, clergy, monastics, and laity. The local MVP combines a Caddy reverse proxy, Prosody XMPP, Converse.js web chat, PostgreSQL, a small portal for invites, verification, rooms, meetings, audit records, and a placeholder meeting route.
 
 The MVP is invite-only. Public registration and open XMPP federation are disabled by default.
 
@@ -23,18 +23,18 @@ The MVP is invite-only. Public registration and open XMPP federation are disable
 
 Implemented so far:
 
-- Docker Compose services for Caddy, PostgreSQL, Prosody, Converse.js, and Jitsi.
-- Caddy routes for portal, chat, Jitsi, and a disabled library placeholder.
+- Local Docker Compose services for Caddy, PostgreSQL, Prosody, Converse.js, the portal, and a Jitsi web placeholder.
+- Caddy routes for portal, chat, the local meetings placeholder, and a disabled library placeholder.
 - Prosody config with registration disabled and federation disabled for MVP.
 - Converse.js web chat pointed at Prosody browser transports.
 - Portal database migrations for users, groups, roles, invites, verification, rooms, meetings, and audit events.
 - Portal CLI workflows for invites, verification, room access, meeting tokens, and migrations.
-- Minimal admin UI for viewing portal state and managing invites and verification.
+- Minimal portal admin UI container with a `/healthz` endpoint.
 - Local backup and restore scripts for PostgreSQL and service volumes.
 
 Still rough:
 
-- The portal is not packaged as a production image yet. Run portal CLI/admin commands from the repo on the host.
+- Full Jitsi is not enabled in the local MVP stack. The `meet` hostname routes to a placeholder web service.
 - No public signup flow exists. Users are created by invite redemption and then manually approved.
 - Real deployment needs real secrets in `.env`, DNS, and firewall rules.
 
@@ -59,7 +59,7 @@ Create DNS records before starting Caddy. Use normal `A` or `AAAA` records point
 | --------- | ---------------------------- | -------------- |
 | Portal    | `portal.example.org`         | Admin portal   |
 | Chat      | `chat.example.org`           | Web chat       |
-| Meet      | `meet.example.org`           | Jitsi Meet     |
+| Meet      | `meet.example.org`           | Meetings route |
 | Library   | `library.example.org`        | Disabled stub  |
 
 Open these ports on the host firewall or provider firewall:
@@ -68,7 +68,6 @@ Open these ports on the host firewall or provider firewall:
 | ----------- | ---------------------------- |
 | `80/tcp`    | HTTP and Let's Encrypt checks |
 | `443/tcp`   | HTTPS                         |
-| `10000/udp` | Jitsi media                   |
 
 Clone the repo:
 
@@ -100,8 +99,6 @@ CONVERSE_WEBSOCKET_URL=wss://chat.example.org/xmpp-websocket
 POSTGRES_PASSWORD=replace_with_a_real_password
 PORTAL_SECRET_KEY=replace_with_a_real_secret
 JITSI_JWT_APP_SECRET=replace_with_a_real_secret
-JITSI_JICOFO_AUTH_PASSWORD=replace_with_a_real_password
-JITSI_JVB_AUTH_PASSWORD=replace_with_a_real_password
 
 ACME_EMAIL=admin@example.org
 ```
@@ -121,7 +118,7 @@ Do not commit `.env`.
 | `ROOT_DOMAIN`                 | Yes      | Parent domain for the instance.              |
 | `PORTAL_DOMAIN`               | Yes      | Public portal hostname.                      |
 | `CHAT_DOMAIN`                 | Yes      | Public chat hostname.                        |
-| `MEET_DOMAIN`                 | Yes      | Public Jitsi hostname.                       |
+| `MEET_DOMAIN`                 | Yes      | Public meetings hostname.                    |
 | `LIBRARY_DOMAIN`              | Yes      | Reserved library hostname.                   |
 | `XMPP_DOMAIN`                 | Yes      | Prosody local XMPP domain.                   |
 | `XMPP_ADMIN_JID`              | Yes      | Prosody admin JID placeholder.               |
@@ -132,22 +129,28 @@ Do not commit `.env`.
 | `POSTGRES_DB`                 | Yes      | Portal database name.                        |
 | `POSTGRES_USER`               | Yes      | Portal database user.                        |
 | `POSTGRES_PASSWORD`           | Yes      | Portal database password.                    |
-| `PORTAL_DATABASE_URL`         | Yes      | PostgreSQL URL used by portal tools.         |
+| `PORTAL_DATABASE_URL`         | No       | Optional PostgreSQL URL override.            |
 | `PORTAL_SECRET_KEY`           | Yes      | Portal signing secret placeholder.           |
-| `JITSI_PUBLIC_URL`            | Yes      | Public Jitsi URL.                            |
+| `JITSI_PUBLIC_URL`            | Yes      | Public meetings URL.                         |
 | `JITSI_ENABLE_AUTH`           | Yes      | Keep `1` to require Jitsi authentication.    |
 | `JITSI_ENABLE_GUESTS`         | Yes      | Keep `0` for no anonymous public guests.     |
 | `JITSI_JWT_APP_ID`            | Yes      | Jitsi JWT app identifier.                    |
 | `JITSI_JWT_APP_SECRET`        | Yes      | Jitsi JWT shared secret.                     |
-| `JITSI_JICOFO_AUTH_PASSWORD`  | Yes      | Jitsi internal Jicofo password.              |
-| `JITSI_JVB_AUTH_PASSWORD`     | Yes      | Jitsi internal JVB password.                 |
 | `ACME_EMAIL`                  | Prod     | Email used by Caddy for Let's Encrypt.       |
 | `BACKUP_ROOT`                 | Yes      | Local backup output path.                    |
 | `RESTORE_CONFIRM`             | Restore  | Must be `restore-local-backup` for restores. |
 
 ## Certificates
 
-Caddy handles certificates automatically through Let's Encrypt. You do not need to create or mount TLS certificates manually.
+The local MVP uses Caddy internal certificates so the stack can run on `.localhost` names. You do not need to create or mount TLS certificates manually.
+
+For local testing:
+
+- Use the `.localhost` names in `.env.example`.
+- Use port `8443`.
+- Expect browser trust warnings unless you trust the local Caddy CA.
+
+For a real host, Caddy can handle certificates automatically through Let's Encrypt after the TLS policy is adjusted for production hostnames.
 
 For Let's Encrypt to work:
 
@@ -156,11 +159,20 @@ For Let's Encrypt to work:
 - `ACME_EMAIL` should be set in `.env`.
 - `PORTAL_DOMAIN`, `CHAT_DOMAIN`, `MEET_DOMAIN`, and `LIBRARY_DOMAIN` must be real names, not `.localhost` names.
 
-Start Caddy with the stack. On first public start, Caddy requests certificates and stores ACME data in the `reverse_proxy_data` and `reverse_proxy_config` Docker volumes.
-
-For local-only testing, keep the `.localhost` domains in `.env.example`. Browsers may warn or fail on HTTPS because public Let's Encrypt certificates are not issued for `.localhost`.
+After production TLS is enabled, Caddy stores ACME data in the `reverse_proxy_data` and `reverse_proxy_config` Docker volumes.
 
 ## Run
+
+For local MVP testing:
+
+```bash
+scripts/dev-up.sh
+scripts/check-stack.sh
+scripts/dev-logs.sh
+scripts/dev-down.sh
+```
+
+The helper creates `.env` from `.env.example` if it is missing. Local HTTPS uses Caddy internal certificates on port `8443`, so browser trust warnings are expected.
 
 Check the Compose file:
 
@@ -306,7 +318,7 @@ Open Jitsi at:
 https://meet.example.org
 ```
 
-Jitsi uses JWT authentication. Meeting links and tokens should be issued through portal meeting commands for approved users or explicitly allowed guests.
+The local MVP routes the meeting hostname to a placeholder web service. Full Jitsi remains a later activation step. Meeting links and tokens can still be modeled through portal meeting commands for approved users or explicitly allowed guests.
 
 Create a meeting:
 

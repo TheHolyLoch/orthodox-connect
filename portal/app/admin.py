@@ -32,6 +32,11 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 		route, query = parse_request_path(self.path)
 
+		if route == '/healthz':
+			self.send_health()
+
+			return
+
 		if route == '/admin.css':
 			self.send_css()
 
@@ -96,6 +101,32 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		self.send_header('Content-Type', 'text/html; charset=utf-8')
 		self.end_headers()
 		self.wfile.write(body.encode('utf-8'))
+
+	def send_health(self):
+		'''Send portal health status.'''
+
+		status_code = 200
+		payload     = {
+			'database': 'ok',
+			'service': 'portal',
+			'status': 'ok',
+		}
+
+		try:
+			with db.connect_database() as connection:
+				with connection.cursor() as cursor:
+					cursor.execute('SELECT 1 AS ok')
+					cursor.fetchone()
+		except Exception as error:
+			status_code          = 503
+			payload['database'] = 'error'
+			payload['error']    = error.__class__.__name__
+			payload['status']   = 'error'
+
+		self.send_response(status_code)
+		self.send_header('Content-Type', 'application/json; charset=utf-8')
+		self.end_headers()
+		self.wfile.write(json.dumps(payload, sort_keys=True).encode('utf-8'))
 
 
 def admin_css() -> str:

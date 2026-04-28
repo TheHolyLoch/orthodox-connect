@@ -13,12 +13,48 @@ if os.path.exists('.env'):
 		load_dotenv()
 
 
+def env_or_file(name: str, default: str | None = None) -> str:
+	'''
+	Return an environment value, with Docker secret file fallback.
+
+	:param name: Environment variable name
+	:param default: Optional default value
+	'''
+
+	file_path = os.getenv(f'{name}_FILE')
+
+	if file_path:
+		with open(file_path, 'r', encoding='utf-8') as secret_file:
+			return secret_file.read().strip()
+
+	value = os.getenv(name)
+
+	if value is not None:
+		return value
+
+	if default is not None:
+		return default
+
+	raise KeyError(name)
+
+
 def database_url() -> str:
 	'''
 	Return the PostgreSQL database URL from the environment.
 	'''
 
-	return os.environ['PORTAL_DATABASE_URL']
+	configured_url = os.getenv('PORTAL_DATABASE_URL')
+
+	if configured_url:
+		return configured_url
+
+	host     = env_or_file('POSTGRES_HOST', 'postgres')
+	port     = env_or_file('POSTGRES_PORT', '5432')
+	database = env_or_file('POSTGRES_DB')
+	user     = env_or_file('POSTGRES_USER')
+	password = env_or_file('POSTGRES_PASSWORD')
+
+	return f'postgresql://{user}:{password}@{host}:{port}/{database}'
 
 
 def invite_token_bytes() -> int:
@@ -42,7 +78,7 @@ def jitsi_jwt_app_secret() -> str:
 	Return the Jitsi JWT shared secret.
 	'''
 
-	return os.environ['JITSI_JWT_APP_SECRET']
+	return env_or_file('JITSI_JWT_APP_SECRET')
 
 
 def jitsi_meeting_creator_roles() -> set[str]:
@@ -60,7 +96,7 @@ def jitsi_public_url() -> str:
 	Return the public Jitsi URL.
 	'''
 
-	return os.environ['JITSI_PUBLIC_URL'].rstrip('/')
+	return env_or_file('JITSI_PUBLIC_URL').rstrip('/')
 
 
 def jitsi_token_ttl_seconds() -> int:
@@ -76,4 +112,4 @@ def jitsi_xmpp_domain() -> str:
 	Return the Jitsi XMPP domain used in JWT subjects.
 	'''
 
-	return os.environ['JITSI_XMPP_DOMAIN']
+	return env_or_file('JITSI_XMPP_DOMAIN')

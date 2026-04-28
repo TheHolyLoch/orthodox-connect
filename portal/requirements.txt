@@ -2,4 +2,4 @@
 # orthodox-connect/portal/requirements.txt
 
 psycopg[binary]>=3.1,<4
-dotenv
+python-dotenv>=1.0,<2

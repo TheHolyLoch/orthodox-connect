@@ -4,7 +4,7 @@
 services:
   reverse-proxy:
     image: caddy:2-alpine
-    container_name: orthodox_connect_reverse_proxy
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     environment:
@@ -24,13 +24,26 @@ services:
       - xmpp
       - video
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    depends_on:
+      portal:
+        condition: service_healthy
+      converse:
+        condition: service_started
+      jitsi-web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   portal:
-    image: python:3-slim
-    container_name: orthodox_connect_portal
-    command: ["python3", "-m", "http.server", "8000"]
+    build:
+      context: .
+      dockerfile: portal/Dockerfile
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     environment:
@@ -38,40 +51,60 @@ services:
       PORTAL_DOMAIN: "${PORTAL_DOMAIN}"
       POSTGRES_DB: "${POSTGRES_DB}"
       POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
       POSTGRES_HOST: "${POSTGRES_HOST:-postgres}"
       POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
-      PORTAL_DATABASE_URL: "${PORTAL_DATABASE_URL}"
-      PORTAL_SECRET_KEY: "${PORTAL_SECRET_KEY}"
+      PORTAL_DATABASE_URL: "${PORTAL_DATABASE_URL:-}"
+      PORTAL_ADMIN_HOST: "${PORTAL_ADMIN_HOST:-0.0.0.0}"
+      PORTAL_ADMIN_PORT: "${PORTAL_ADMIN_PORT:-8000}"
+      PORTAL_INVITE_TOKEN_BYTES: "${PORTAL_INVITE_TOKEN_BYTES:-32}"
+      PORTAL_SECRET_KEY_FILE: "/run/secrets/portal_secret_key"
       JITSI_JWT_APP_ID: "${JITSI_JWT_APP_ID}"
-      JITSI_JWT_APP_SECRET: "${JITSI_JWT_APP_SECRET}"
+      JITSI_JWT_APP_SECRET_FILE: "/run/secrets/jitsi_jwt_app_secret"
       JITSI_MEETING_CREATOR_ROLES: "${JITSI_MEETING_CREATOR_ROLES}"
       JITSI_PUBLIC_URL: "${JITSI_PUBLIC_URL}"
       JITSI_TOKEN_TTL_SECONDS: "${JITSI_TOKEN_TTL_SECONDS:-3600}"
       JITSI_XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
+    secrets:
+      - postgres_password
+      - portal_secret_key
+      - jitsi_jwt_app_secret
     networks:
       - internal
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).read()"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
   postgres:
     image: postgres:16-alpine
-    container_name: orthodox_connect_postgres
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     environment:
       POSTGRES_DB: "${POSTGRES_DB}"
       POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+    secrets:
+      - postgres_password
     networks:
       - internal
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./portal/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   prosody:
     image: prosody/prosody:latest
-    container_name: orthodox_connect_prosody
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     environment:
@@ -85,10 +118,15 @@ services:
     volumes:
       - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
       - prosody_data:/var/lib/prosody
+    healthcheck:
+      test: ["CMD", "prosodyctl", "check", "config"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   converse:
     image: nginx:alpine
-    container_name: orthodox_connect_converse
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     command:
@@ -111,125 +149,30 @@ services:
     volumes:
       - ./converse:/converse:ro
     depends_on:
-      - prosody
+      prosody:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   jitsi-web:
-    image: "jitsi/web:${JITSI_IMAGE_VERSION:-stable}"
-    container_name: orthodox_connect_jitsi_web
+    image: nginx:alpine
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    environment:
-      AUTH_TYPE: "jwt"
-      DISABLE_HTTPS: "1"
-      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
-      ENABLE_GUESTS: "${JITSI_ENABLE_GUESTS:-0}"
-      ENABLE_WELCOME_PAGE: "0"
-      ENABLE_XMPP_WEBSOCKET: "1"
-      JWT_ALLOW_EMPTY: "0"
-      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
-      TZ: "${TZ:-UTC}"
-      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
-      XMPP_BOSH_URL_BASE: "http://jitsi-prosody:5280"
-      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
-      XMPP_GUEST_DOMAIN: "${JITSI_XMPP_GUEST_DOMAIN}"
-      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
-      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
-      XMPP_SERVER: "jitsi-prosody"
+    volumes:
+      - ./jitsi/index.html:/usr/share/nginx/html/index.html:ro
+      - ./jitsi/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - internal
       - video
-    volumes:
-      - jitsi_web_config:/config
-      - ./jitsi/custom-config.js:/config/custom-config.js:ro
-    depends_on:
-      - jitsi-jvb
-
-  jitsi-prosody:
-    image: "jitsi/prosody:${JITSI_IMAGE_VERSION:-stable}"
-    container_name: orthodox_connect_jitsi_prosody
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      AUTH_TYPE: "jwt"
-      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
-      ENABLE_GUESTS: "${JITSI_ENABLE_GUESTS:-0}"
-      ENABLE_S2S: "0"
-      ENABLE_XMPP_WEBSOCKET: "1"
-      JICOFO_AUTH_PASSWORD: "${JITSI_JICOFO_AUTH_PASSWORD}"
-      JVB_AUTH_PASSWORD: "${JITSI_JVB_AUTH_PASSWORD}"
-      JVB_AUTH_USER: "${JITSI_JVB_AUTH_USER:-jvb}"
-      JWT_ACCEPTED_AUDIENCES: "${JITSI_JWT_APP_ID}"
-      JWT_ACCEPTED_ISSUERS: "${JITSI_JWT_APP_ID}"
-      JWT_ALLOW_EMPTY: "0"
-      JWT_APP_ID: "${JITSI_JWT_APP_ID}"
-      JWT_APP_SECRET: "${JITSI_JWT_APP_SECRET}"
-      JWT_AUTH_TYPE: "token"
-      JWT_TOKEN_AUTH_MODULE: "token_verification"
-      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
-      TZ: "${TZ:-UTC}"
-      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
-      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
-      XMPP_GUEST_DOMAIN: "${JITSI_XMPP_GUEST_DOMAIN}"
-      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
-      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
-    networks:
-      - video
-    volumes:
-      - jitsi_prosody_config:/config
-
-  jitsi-jicofo:
-    image: "jitsi/jicofo:${JITSI_IMAGE_VERSION:-stable}"
-    container_name: orthodox_connect_jitsi_jicofo
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      AUTH_TYPE: "jwt"
-      ENABLE_AUTH: "${JITSI_ENABLE_AUTH:-1}"
-      JICOFO_AUTH_PASSWORD: "${JITSI_JICOFO_AUTH_PASSWORD}"
-      JICOFO_AUTH_TYPE: "internal"
-      JVB_BREWERY_MUC: "${JITSI_JVB_BREWERY_MUC:-jvbbrewery}"
-      TZ: "${TZ:-UTC}"
-      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
-      XMPP_DOMAIN: "${JITSI_XMPP_DOMAIN}"
-      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
-      XMPP_MUC_DOMAIN: "${JITSI_XMPP_MUC_DOMAIN}"
-      XMPP_SERVER: "jitsi-prosody"
-    networks:
-      - video
-    volumes:
-      - jitsi_jicofo_config:/config
-    depends_on:
-      - jitsi-prosody
-
-  jitsi-jvb:
-    image: "jitsi/jvb:${JITSI_IMAGE_VERSION:-stable}"
-    container_name: orthodox_connect_jitsi_jvb
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      JVB_AUTH_PASSWORD: "${JITSI_JVB_AUTH_PASSWORD}"
-      JVB_AUTH_USER: "${JITSI_JVB_AUTH_USER:-jvb}"
-      JVB_BREWERY_MUC: "${JITSI_JVB_BREWERY_MUC:-jvbbrewery}"
-      JVB_PORT: "${JITSI_JVB_PORT:-10000}"
-      JVB_XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
-      JVB_XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
-      JVB_XMPP_PORT: "5222"
-      JVB_XMPP_SERVER: "jitsi-prosody"
-      PUBLIC_URL: "${JITSI_PUBLIC_URL}"
-      TZ: "${TZ:-UTC}"
-      XMPP_AUTH_DOMAIN: "${JITSI_XMPP_AUTH_DOMAIN}"
-      XMPP_INTERNAL_MUC_DOMAIN: "${JITSI_XMPP_INTERNAL_MUC_DOMAIN}"
-      XMPP_PORT: "5222"
-      XMPP_SERVER: "jitsi-prosody"
-    networks:
-      - public
-      - video
-    ports:
-      - "${JITSI_JVB_PORT:-10000}:${JITSI_JVB_PORT:-10000}/udp"
-    volumes:
-      - jitsi_jvb_config:/config
-    depends_on:
-      - jitsi-prosody
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   public:
@@ -243,9 +186,13 @@ networks:
 volumes:
   postgres_data:
   prosody_data:
-  jitsi_web_config:
-  jitsi_prosody_config:
-  jitsi_jicofo_config:
-  jitsi_jvb_config:
   reverse_proxy_data:
   reverse_proxy_config:
+
+secrets:
+  postgres_password:
+    environment: POSTGRES_PASSWORD
+  portal_secret_key:
+    environment: PORTAL_SECRET_KEY
+  jitsi_jwt_app_secret:
+    environment: JITSI_JWT_APP_SECRET
