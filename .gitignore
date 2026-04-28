@@ -31,5 +31,4 @@ build/
 data/
 tmp/
 *.bak
-docs/
 AGENTS.md
