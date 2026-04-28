@@ -52,8 +52,8 @@ services:
       POSTGRES_DB: "${POSTGRES_DB}"
       POSTGRES_USER: "${POSTGRES_USER}"
       POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
-      POSTGRES_HOST: "${POSTGRES_HOST:-postgres}"
-      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_HOST: "${POSTGRES_CONTAINER_HOST:-postgres}"
+      POSTGRES_PORT: "${POSTGRES_CONTAINER_PORT:-5432}"
       PORTAL_DATABASE_URL: "${PORTAL_DATABASE_URL:-}"
       PORTAL_ADMIN_HOST: "${PORTAL_ADMIN_HOST:-0.0.0.0}"
       PORTAL_ADMIN_PORT: "${PORTAL_ADMIN_PORT:-8000}"
@@ -94,6 +94,9 @@ services:
       - postgres_password
     networks:
       - internal
+      - host-access
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -178,6 +181,7 @@ networks:
   public:
   internal:
     internal: true
+  host-access:
   xmpp:
     internal: true
   video:

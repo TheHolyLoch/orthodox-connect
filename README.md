@@ -111,6 +111,8 @@ openssl rand -hex 32
 
 Do not commit `.env`.
 
+For host-side portal CLI use, keep `POSTGRES_HOST=127.0.0.1` and `POSTGRES_CONTAINER_HOST=postgres`. Compose binds PostgreSQL to `127.0.0.1:${POSTGRES_HOST_PORT}`, so commands run from a local Python venv can reach the database without using Docker's internal `postgres` hostname.
+
 ## Environment Variables
 
 | Variable                      | Required | Purpose                                      |
@@ -129,6 +131,12 @@ Do not commit `.env`.
 | `POSTGRES_DB`                 | Yes      | Portal database name.                        |
 | `POSTGRES_USER`               | Yes      | Portal database user.                        |
 | `POSTGRES_PASSWORD`           | Yes      | Portal database password.                    |
+| `POSTGRES_HOST`               | Yes      | Host-side CLI database host.                 |
+| `POSTGRES_CONTAINER_HOST`     | Yes      | Container-side database host.                |
+| `POSTGRES_PORT`               | Yes      | Host-side CLI database port.                 |
+| `POSTGRES_CONTAINER_PORT`     | Yes      | Container-side database port.                |
+| `POSTGRES_BIND_ADDRESS`       | Yes      | Host bind address for PostgreSQL.            |
+| `POSTGRES_HOST_PORT`          | Yes      | Host-side PostgreSQL port.                   |
 | `PORTAL_DATABASE_URL`         | No       | Optional PostgreSQL URL override.            |
 | `PORTAL_SECRET_KEY`           | Yes      | Portal signing secret placeholder.           |
 | `JITSI_PUBLIC_URL`            | Yes      | Public meetings URL.                         |
