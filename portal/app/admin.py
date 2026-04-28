@@ -59,7 +59,19 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			return
 
 		if route == '/':
-			self.redirect('/admin')
+			self.redirect('/account')
+
+			return
+
+		if route == '/account':
+			current_user = self.current_user()
+
+			if not current_user:
+				self.redirect('/login')
+
+				return
+
+			self.send_html(render_account_page(current_user, query))
 
 			return
 
@@ -98,6 +110,18 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 			return
 
+		if route == '/account/verifications/create':
+			current_user = self.current_user()
+
+			if not current_user:
+				self.redirect('/login')
+
+				return
+
+			self.handle_user_verification_request(form, current_user)
+
+			return
+
 		current_user = self.current_admin_user()
 
 		if not current_user:
@@ -132,6 +156,19 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 	def current_admin_user(self) -> dict | None:
 		'''Return the authenticated admin user for the current request.'''
 
+		user = self.current_user()
+
+		if not user:
+			return None
+
+		if not auth.is_admin_user(str(user['id'])):
+			return None
+
+		return user
+
+	def current_user(self) -> dict | None:
+		'''Return the authenticated user for the current request.'''
+
 		cookie_header = self.headers.get('Cookie', '')
 		cookies       = http.cookies.SimpleCookie(cookie_header)
 		session       = cookies.get(auth.SESSION_COOKIE)
@@ -155,7 +192,8 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			return
 
 		self.send_response(303)
-		self.send_header('Location', '/admin')
+		location = '/admin' if auth.is_admin_user(str(result['user']['id'])) else '/account'
+		self.send_header('Location', location)
 		self.send_header('Set-Cookie', session_cookie(result['session']))
 		self.end_headers()
 
@@ -179,6 +217,28 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			return
 
 		self.send_html(render_invite_redeem_page('', 'Account created and pending administrator approval.'))
+
+	def handle_user_verification_request(self, form: dict, current_user: dict):
+		'''
+		Handle verification request submission from a logged-in user.
+
+		:param form: Parsed form data
+		:param current_user: Authenticated portal user
+		'''
+
+		try:
+			verifications.create_request(
+				str(current_user['id']),
+				single_value(form, 'request_type'),
+				optional_value(form, 'group_id'),
+				optional_value(form, 'note')
+			)
+		except verifications.VerificationError as error:
+			self.send_html(render_account_page(current_user, {'message': [f'Error: {error}']}), status_code=400)
+
+			return
+
+		self.send_html(render_account_page(current_user, {'message': ['Verification request submitted.']}))
 
 	def log_message(self, format, *args):
 		'''Keep request logs minimal for local operation.'''
@@ -763,6 +823,46 @@ def render_admin_session(current_user: dict) -> str:
 '''
 
 
+def render_account_page(current_user: dict, query: dict) -> str:
+	'''
+	Return the logged-in user account page.
+
+	:param current_user: Authenticated portal user
+	:param query: Parsed query data
+	'''
+
+	message  = single_value(query, 'message')
+	requests = verifications.list_requests(user_id=str(current_user['id']))
+	content  = [
+		'<!doctype html>',
+		'<html lang="en">',
+		'<head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		'<title>Orthodox Connect Account</title>',
+		'<link rel="stylesheet" href="/admin.css">',
+		'</head>',
+		'<body>',
+		'<header><h1>Orthodox Connect</h1><p>Account verification</p></header>',
+		'<main>',
+		render_admin_session(current_user),
+	]
+
+	if message:
+		class_name = 'message error' if message.startswith('Error:') else 'message'
+		content.append(f'<section class="{class_name}">{escape(message)}</section>')
+
+	content.append(render_verification_request_form())
+	content.append(render_table(
+		'My Verification Requests',
+		requests,
+		['status', 'request_type', 'note', 'decision', 'reason', 'created_at', 'decided_at']
+	))
+	content.extend(['</main>', '</body>', '</html>'])
+
+	return '\n'.join(content)
+
+
 def render_admin_page(current_user: dict, query: dict) -> str:
 	'''
 	Return the admin UI HTML.
@@ -1043,7 +1143,7 @@ def render_table(title: str, rows: list[dict], columns: list[str]) -> str:
 	body    = []
 
 	for row in rows:
-		cells = ''.join(f'<td>{render_value(row.get(column))}</td>' for column in columns)
+		cells = ''.join(f'<td>{render_cell(row, column)}</td>' for column in columns)
 		body.append(f'<tr>{cells}</tr>')
 
 	return f'{heading}<div class="table-wrap"><table><thead><tr>{headers}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
@@ -1057,6 +1157,20 @@ def render_users(users: list[dict]) -> str:
 	'''
 
 	return render_table('Users', users, ['display_name', 'email', 'xmpp_jid', 'status', 'roles', 'groups', 'created_at'])
+
+
+def render_cell(row: dict, column: str) -> str:
+	'''
+	Return table cell content for a column.
+
+	:param row: Table row
+	:param column: Column name
+	'''
+
+	if column == 'action':
+		return str(row.get(column) or '')
+
+	return render_value(row.get(column))
 
 
 def render_value(value) -> str:
@@ -1109,6 +1223,31 @@ def render_verification_management(actor_id: str | None, state: dict) -> str:
 <section>
 	<h2>Verification Requests</h2>
 	{render_table('', rows, ['status', 'request_type', 'user_id', 'group_id', 'note', 'decision', 'reason', 'created_at', 'decided_at', 'action'])}
+</section>
+'''
+
+
+def render_verification_request_form() -> str:
+	'''Return the user verification request form markup.'''
+
+	return '''
+<section>
+	<h2>Request Verification</h2>
+	<form method="post" action="/account/verifications/create">
+		<div class="field">
+			<label for="request_type">Verification type</label>
+			<select id="request_type" name="request_type" required>
+				<option value="clergy">Clergy</option>
+				<option value="monastic">Monastic</option>
+				<option value="parish_admin">Parish admin</option>
+			</select>
+		</div>
+		<div class="field">
+			<label for="note">Note for administrators</label>
+			<textarea id="note" name="note" rows="4"></textarea>
+		</div>
+		<button type="submit">Submit Request</button>
+	</form>
 </section>
 '''
 

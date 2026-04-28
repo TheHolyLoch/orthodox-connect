@@ -18,6 +18,7 @@ HASH_ALGORITHM    = 'pbkdf2_sha256'
 HASH_ITERATIONS   = 260_000
 SESSION_COOKIE    = 'orthodox_connect_session'
 SESSION_SALT_SIZE = 16
+USER_LOGIN_ALLOWED = {'approved', 'pending'}
 
 
 class AuthError(Exception):
@@ -215,9 +216,21 @@ def hash_password(password: str) -> str:
 	])
 
 
+def is_admin_user(user_id: str) -> bool:
+	'''
+	Return whether a user has an active admin role.
+
+	:param user_id: User ID
+	'''
+
+	with db.connect_database() as connection:
+		with connection.cursor() as cursor:
+			return rooms.has_any_scoped_role(cursor, user_id, ADMIN_ROLES)
+
+
 def load_session_user(session_token: str | None) -> dict | None:
 	'''
-	Return the authenticated admin user for a signed session token.
+	Return the authenticated user for a signed session token.
 
 	:param session_token: Session cookie value
 	'''
@@ -239,10 +252,7 @@ def load_session_user(session_token: str | None) -> dict | None:
 			)
 			user = cursor.fetchone()
 
-			if not user or user['status'] != 'approved':
-				return None
-
-			if not rooms.has_any_scoped_role(cursor, payload['user_id'], ADMIN_ROLES):
+			if not user or user['status'] not in USER_LOGIN_ALLOWED:
 				return None
 
 			return user
@@ -277,8 +287,8 @@ def login(email: str, password: str, remote_addr: str | None = None) -> dict | N
 
 				return None
 
-			if user['status'] != 'approved' or not rooms.has_any_scoped_role(cursor, user['id'], ADMIN_ROLES):
-				audit_login(cursor, str(user['id']), 'admin_login_failed', {'email': email, 'remote_addr': remote_addr or '', 'reason': 'not_authorized'})
+			if user['status'] not in USER_LOGIN_ALLOWED:
+				audit_login(cursor, str(user['id']), 'admin_login_failed', {'email': email, 'remote_addr': remote_addr or '', 'reason': 'status_not_allowed'})
 				connection.commit()
 
 				return None

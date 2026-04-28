@@ -3,7 +3,7 @@
 
 import json
 
-from portal.app import db
+from portal.app import db, rooms
 
 
 ROLE_BY_REQUEST_TYPE = {
@@ -23,6 +23,10 @@ class VerificationDecisionError(VerificationError):
 
 class VerificationRequestError(VerificationError):
 	'''Raised when a verification request cannot be created.'''
+
+
+class VerificationUnauthorizedError(VerificationError):
+	'''Raised when a verification decision actor is not an admin.'''
 
 
 def approve_request(request_id: str, admin_user_id: str, reason: str | None = None) -> dict:
@@ -51,10 +55,29 @@ def create_request(user_id: str, request_type: str, group_id: str | None = None,
 
 	with db.connect_database() as connection:
 		with connection.cursor() as cursor:
-			cursor.execute('SELECT id FROM users WHERE id = %s', (user_id,))
+			cursor.execute('SELECT id, status FROM users WHERE id = %s', (user_id,))
+			user = cursor.fetchone()
 
-			if not cursor.fetchone():
+			if not user:
 				raise VerificationRequestError('user not found')
+
+			if user['status'] not in ('approved', 'pending'):
+				raise VerificationRequestError('user status cannot request verification')
+
+			cursor.execute(
+				'''
+				SELECT 1
+				FROM verification_requests
+				WHERE user_id = %s
+					AND request_type = %s
+					AND ((%s::uuid IS NULL AND group_id IS NULL) OR group_id = %s::uuid)
+					AND status = 'pending'
+				''',
+				(user_id, request_type, group_id, group_id)
+			)
+
+			if cursor.fetchone():
+				raise VerificationRequestError('matching pending verification request already exists')
 
 			cursor.execute(
 				'''
@@ -124,10 +147,7 @@ def decide_request(request_id: str, admin_user_id: str, decision: str, reason: s
 
 	with db.connect_database() as connection:
 		with connection.cursor() as cursor:
-			cursor.execute('SELECT id FROM users WHERE id = %s', (admin_user_id,))
-
-			if not cursor.fetchone():
-				raise VerificationDecisionError('admin user not found')
+			require_admin(cursor, admin_user_id)
 
 			cursor.execute(
 				'''
@@ -345,6 +365,23 @@ def reject_request(request_id: str, admin_user_id: str, reason: str) -> dict:
 	'''
 
 	return decide_request(request_id, admin_user_id, 'denied', reason)
+
+
+def require_admin(cursor, admin_user_id: str):
+	'''
+	Require an approved admin user for verification decisions.
+
+	:param cursor: Open database cursor
+	:param admin_user_id: Acting admin user ID
+	'''
+
+	user = rooms.fetch_user(cursor, admin_user_id)
+
+	if not user or user['status'] != 'approved':
+		raise VerificationUnauthorizedError('admin user is required')
+
+	if not rooms.has_any_scoped_role(cursor, admin_user_id, rooms.ADMIN_ROLES):
+		raise VerificationUnauthorizedError('admin role is required')
 
 
 def role_description(role_name: str) -> str:
