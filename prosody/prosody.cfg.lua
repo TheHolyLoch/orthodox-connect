@@ -46,9 +46,9 @@ modules_disabled = {
 
 allow_registration = false
 
-c2s_require_encryption = false
+c2s_require_encryption = true
 s2s_require_encryption = true
-allow_unencrypted_plain_auth = true
+allow_unencrypted_plain_auth = false
 
 authentication = 'internal_hashed'
 storage        = 'internal'
@@ -73,9 +73,18 @@ VirtualHost(xmpp_domain)
 	enabled            = true
 	allow_registration = false
 
+	ssl = {
+		certificate = "/etc/prosody/certs/xmpp.orthodox.zone.crt";
+		key = "/etc/prosody/certs/xmpp.orthodox.zone.key";
+	}
+
 Component(xmpp_muc_domain, 'muc')
 	name                     = 'Orthodox Connect Group Chats'
 	restrict_room_creation   = 'admin'
 	modules_enabled          = {
 		'muc_mam';
+	}
+	ssl = {
+		certificate = "/etc/prosody/certs/rooms.xmpp.orthodox.zone.crt";
+		key = "/etc/prosody/certs/rooms.xmpp.orthodox.zone.key";
 	}

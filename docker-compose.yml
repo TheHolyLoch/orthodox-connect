@@ -133,6 +133,7 @@ services:
       - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
       - ./prosody/mod_orthodox_provisioning.lua:/usr/lib/prosody/modules/mod_orthodox_provisioning.lua:ro
       - prosody_data:/var/lib/prosody
+      - ./prosody/certs:/etc/prosody/certs:ro
     healthcheck:
       test: ["CMD", "prosodyctl", "check", "config"]
       interval: 30s
