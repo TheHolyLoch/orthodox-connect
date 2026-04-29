@@ -385,6 +385,37 @@ def eligible_room_member_jids(cursor, room: dict) -> list[str]:
 	return [user['xmpp_jid'] for user in cursor.fetchall() if can_access_room_record(cursor, room, str(user['id']))]
 
 
+def accessible_rooms_for_user(user_id: str) -> list[dict]:
+	'''
+	Return rooms visible to the given portal user.
+
+	:param user_id: Portal user ID
+	'''
+
+	with db.connect_database() as connection:
+		with connection.cursor() as cursor:
+			cursor.execute(
+				'''
+				SELECT
+					id,
+					created_by_user_id,
+					group_id,
+					name,
+					slug,
+					xmpp_room_jid,
+					muc_provisioning_status,
+					muc_provisioning_error,
+					privacy_level,
+					created_at,
+					updated_at
+				FROM rooms
+				ORDER BY name ASC
+				'''
+			)
+
+			return [room for room in cursor.fetchall() if can_access_room_record(cursor, room, user_id)]
+
+
 def fetch_room(cursor, room_id: str) -> dict | None:
 	'''
 	Return a room record by ID.
@@ -414,6 +445,38 @@ def fetch_room(cursor, room_id: str) -> dict | None:
 	)
 
 	return cursor.fetchone()
+
+
+def open_room(room_id: str, user_id: str) -> dict:
+	'''
+	Record that a user opened a permitted room and return the room.
+
+	:param room_id: Portal room ID
+	:param user_id: Portal user ID
+	'''
+
+	with db.connect_database() as connection:
+		with connection.cursor() as cursor:
+			room = fetch_room(cursor, room_id)
+
+			if not room:
+				raise RoomInputError('room not found')
+
+			if not can_access_room_record(cursor, room, user_id):
+				raise RoomDeniedError('room access denied')
+
+			write_room_audit(
+				cursor,
+				user_id,
+				user_id,
+				room,
+				'room_opened',
+				{'xmpp_room_jid': room['xmpp_room_jid'], 'muc_provisioning_status': room['muc_provisioning_status']}
+			)
+
+		connection.commit()
+
+	return room
 
 
 def provision_muc_room(room_id: str, actor_user_id: str) -> dict:

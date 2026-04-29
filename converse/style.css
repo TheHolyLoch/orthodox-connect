@@ -49,6 +49,13 @@ body {
 	line-height: 1.55;
 }
 
+.chat-intro .room-target {
+	margin-top: 16px;
+	color: var(--ink);
+	font-size: 0.9rem;
+	overflow-wrap: anywhere;
+}
+
 .chat-intro .eyebrow {
 	margin-bottom: 8px;
 	color: var(--primary);

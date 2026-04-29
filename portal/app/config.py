@@ -57,6 +57,25 @@ def database_url() -> str:
 	return f'postgresql://{user}:{password}@{host}:{port}/{database}'
 
 
+def chat_public_url() -> str:
+	'''
+	Return the public chat URL.
+	'''
+
+	configured_url = os.getenv('CHAT_PUBLIC_URL')
+
+	if configured_url:
+		return configured_url.rstrip('/')
+
+	host = env_or_file('CHAT_DOMAIN')
+	port = os.getenv('HTTPS_PORT', '443')
+
+	if port == '443':
+		return f'https://{host}'
+
+	return f'https://{host}:{port}'
+
+
 def invite_token_bytes() -> int:
 	'''
 	Return the byte length used for newly generated invite tokens.

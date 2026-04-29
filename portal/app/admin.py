@@ -75,6 +75,30 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 			return
 
+		if route == '/account/rooms.json':
+			current_user = self.current_user()
+
+			if not current_user:
+				self.send_json({'error': 'login required'}, status_code=401)
+
+				return
+
+			self.send_json({'rooms': visible_room_payload(str(current_user['id']))})
+
+			return
+
+		if route == '/account/rooms/open':
+			current_user = self.current_user()
+
+			if not current_user:
+				self.redirect('/login')
+
+				return
+
+			self.handle_room_open(query, current_user)
+
+			return
+
 		if route != '/admin':
 			self.send_error(404)
 
@@ -169,7 +193,7 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 				self.send_error(404)
 
 				return
-		except (AdminUiError, portal_groups.GroupError, invites.InviteError, verifications.VerificationError, xmpp.XmppProvisioningError) as error:
+		except (AdminUiError, portal_groups.GroupError, invites.InviteError, rooms.RoomAccessError, verifications.VerificationError, xmpp.XmppProvisioningError) as error:
 			message = f'Error: {error}'
 
 		self.send_html(render_admin_page(current_user, {'message': [message]}))
@@ -239,6 +263,28 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 		self.send_html(render_invite_redeem_page('', 'Account created and pending administrator approval.'))
 
+	def handle_room_open(self, query: dict, current_user: dict):
+		'''
+		Handle opening a permitted room in the chat frontend.
+
+		:param query: Parsed query parameters
+		:param current_user: Authenticated portal user
+		'''
+
+		try:
+			room = rooms.open_room(single_value(query, 'room_id'), str(current_user['id']))
+		except rooms.RoomAccessError as error:
+			self.send_html(render_account_page(current_user, {'message': [f'Error: {error}']}), status_code=403)
+
+			return
+
+		if room['muc_provisioning_status'] != 'provisioned' or not room['xmpp_room_jid']:
+			self.send_html(render_account_page(current_user, {'message': ['Room is not available in chat yet.']}), status_code=400)
+
+			return
+
+		self.redirect(f'{chat_url_from_request(self)}/?room={urllib.parse.quote(room["xmpp_room_jid"])}')
+
 	def handle_user_verification_request(self, form: dict, current_user: dict):
 		'''
 		Handle verification request submission from a logged-in user.
@@ -299,6 +345,22 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 		self.send_response(status_code)
 		self.send_header('Content-Type', 'text/html; charset=utf-8')
+		self.end_headers()
+		self.wfile.write(body.encode('utf-8'))
+
+	def send_json(self, payload: dict, status_code: int = 200):
+		'''
+		Send a JSON response.
+
+		:param payload: JSON payload
+		:param status_code: HTTP status code
+		'''
+
+		body = json.dumps(payload, default=str)
+		self.send_response(status_code)
+		self.send_header('Content-Type', 'application/json')
+		self.send_header('Cache-Control', 'no-store')
+		self.send_header('Content-Length', str(len(body.encode('utf-8'))))
 		self.end_headers()
 		self.wfile.write(body.encode('utf-8'))
 
@@ -490,6 +552,21 @@ th {
 	word-break: break-all;
 }
 '''
+
+
+def chat_url_from_request(handler: AdminRequestHandler) -> str:
+	'''
+	Return the chat URL matching the current portal request when possible.
+
+	:param handler: Active request handler
+	'''
+
+	host = handler.headers.get('Host', '')
+
+	if host.startswith('portal.'):
+		return f'https://chat.{host.removeprefix("portal.")}'.rstrip('/')
+
+	return config.chat_public_url()
 
 
 def fetch_admin_state(actor_id: str | None) -> dict:
@@ -942,6 +1019,7 @@ def render_account_page(current_user: dict, query: dict) -> str:
 	message  = single_value(query, 'message')
 	memberships = portal_groups.list_memberships(user_id=str(current_user['id']))
 	requests    = verifications.list_requests(user_id=str(current_user['id']))
+	visible_rooms = rooms.accessible_rooms_for_user(str(current_user['id']))
 	content  = [
 		'<!doctype html>',
 		'<html lang="en">',
@@ -962,6 +1040,7 @@ def render_account_page(current_user: dict, query: dict) -> str:
 		content.append(f'<section class="{class_name}">{escape(message)}</section>')
 
 	content.append(render_verification_request_form())
+	content.append(render_accessible_rooms(visible_rooms))
 	content.append(render_table(
 		'My Groups',
 		memberships,
@@ -975,6 +1054,41 @@ def render_account_page(current_user: dict, query: dict) -> str:
 	content.extend(['</main>', '</body>', '</html>'])
 
 	return '\n'.join(content)
+
+
+def render_accessible_rooms(room_records: list[dict]) -> str:
+	'''
+	Return room links visible to the logged-in user.
+
+	:param room_records: Accessible room records
+	'''
+
+	rows = []
+
+	for room in room_records:
+		row = {
+			'name': room['name'],
+			'privacy_level': room['privacy_level'],
+			'xmpp_room_jid': room['xmpp_room_jid'],
+			'muc_provisioning_status': room['muc_provisioning_status'],
+			'action': render_room_open_action(room),
+		}
+		rows.append(row)
+
+	return render_table('Available Rooms', rows, ['name', 'privacy_level', 'xmpp_room_jid', 'muc_provisioning_status', 'action'])
+
+
+def render_room_open_action(room: dict) -> str:
+	'''
+	Return room open action markup.
+
+	:param room: Room record
+	'''
+
+	if room['muc_provisioning_status'] != 'provisioned' or not room['xmpp_room_jid']:
+		return '<span class="muted">Not available in chat yet</span>'
+
+	return f'<a class="button" href="/account/rooms/open?room_id={escape(room["id"])}">Open Chat</a>'
 
 
 def render_admin_page(current_user: dict, query: dict) -> str:
@@ -1607,6 +1721,32 @@ def session_cookie(session_token: str) -> str:
 	max_age = str(config.portal_session_ttl_seconds())
 
 	return f'{auth.SESSION_COOKIE}={session_token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={max_age}'
+
+
+def visible_room_payload(user_id: str) -> list[dict]:
+	'''
+	Return visible room records for JSON output.
+
+	:param user_id: Portal user ID
+	'''
+
+	payload = []
+
+	for room in rooms.accessible_rooms_for_user(user_id):
+		open_url = None
+
+		if room['muc_provisioning_status'] == 'provisioned' and room['xmpp_room_jid']:
+			open_url = f'/account/rooms/open?room_id={urllib.parse.quote(str(room["id"]))}'
+
+		payload.append({
+			'display_name': room['name'],
+			'scope': room['privacy_level'],
+			'xmpp_room_jid': room['xmpp_room_jid'],
+			'open_url': open_url,
+			'muc_provisioning_status': room['muc_provisioning_status'],
+		})
+
+	return payload
 
 
 def single_value(values: dict, name: str) -> str:

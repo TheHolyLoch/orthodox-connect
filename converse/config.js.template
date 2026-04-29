@@ -2,6 +2,15 @@
 // orthodox-connect/converse/config.js.template
 
 window.addEventListener('DOMContentLoaded', function () {
+	var params     = new URLSearchParams(window.location.search);
+	var roomJid    = params.get('room');
+	var targetNote = document.getElementById('room-target');
+
+	if (roomJid && targetNote) {
+		targetNote.hidden = false;
+		targetNote.textContent = 'Opening room after sign in: ' + roomJid;
+	}
+
 	converse.initialize({
 		authentication: 'login',
 		auto_login: false,
@@ -19,4 +28,12 @@ window.addEventListener('DOMContentLoaded', function () {
 		view_mode: 'embedded',
 		websocket_url: '${CONVERSE_WEBSOCKET_URL}'
 	});
+
+	if (roomJid) {
+		converse.api.waitUntil('initialized').then(function () {
+			converse.api.waitUntil('connected').then(function () {
+				converse.api.rooms.open(roomJid);
+			});
+		});
+	}
 });
