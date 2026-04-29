@@ -12,6 +12,8 @@ cd "${ROOT_DIR}"
 BACKUP_ROOT="${BACKUP_ROOT:-./backups}"
 BACKUP_NAME="${1:-}"
 BACKUP_DIR="${BACKUP_NAME}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-orthodox_connect}"
+RESTORE_MODE="${2:-}"
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || { echo "error: missing required command: $1" && exit 1; }
@@ -64,12 +66,57 @@ restore_postgres() {
 		< "${BACKUP_DIR}/postgres/${POSTGRES_DB}.sql"
 }
 
+service_exists() {
+	local service_name="$1"
+
+	compose config --services | grep -qx "${service_name}"
+}
+
+stop_if_present() {
+	local service_name="$1"
+
+	if service_exists "${service_name}"; then
+		compose stop "${service_name}"
+	else
+		echo "skip: service ${service_name} is not defined"
+	fi
+}
+
+validate_backup() {
+	echo "backup=${BACKUP_DIR}"
+	echo "manifest=ok"
+	echo "postgres_dump=${BACKUP_DIR}/postgres/${POSTGRES_DB}.sql"
+
+	for archive_name in \
+		prosody_data \
+		jitsi_web_config \
+		jitsi_prosody_config \
+		jitsi_jicofo_config \
+		jitsi_jvb_config \
+		reverse_proxy_data \
+		reverse_proxy_config
+	do
+		if [ -f "${BACKUP_DIR}/volumes/${archive_name}.tar.gz" ]; then
+			echo "volume_archive=${archive_name}:ok"
+		else
+			echo "volume_archive=${archive_name}:missing"
+		fi
+	done
+}
+
 main() {
 	require_command docker
 	require_command find
+	require_command grep
 	require_command tar
 
 	resolve_backup_dir
+
+	if [ "${RESTORE_MODE}" = "--dry-run" ] || [ "${RESTORE_DRY_RUN:-}" = "true" ]; then
+		validate_backup
+
+		return
+	fi
 
 	if [ "${RESTORE_CONFIRM:-}" != "restore-local-backup" ]; then
 		echo "error: set RESTORE_CONFIRM=restore-local-backup before restoring"
@@ -78,16 +125,19 @@ main() {
 
 	echo "warning: restore will overwrite PostgreSQL data and supported service volumes"
 
-	compose stop portal converse prosody jitsi-web jitsi-prosody jitsi-jicofo jitsi-jvb reverse-proxy || true
+	for service_name in portal converse prosody jitsi-web jitsi-prosody jitsi-jicofo jitsi-jvb reverse-proxy
+	do
+		stop_if_present "${service_name}"
+	done
 
 	restore_postgres
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_prosody_data" "prosody_data"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_web_config" "jitsi_web_config"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_prosody_config" "jitsi_prosody_config"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_jicofo_config" "jitsi_jicofo_config"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_jvb_config" "jitsi_jvb_config"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_reverse_proxy_data" "reverse_proxy_data"
-	restore_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_reverse_proxy_config" "reverse_proxy_config"
+	restore_volume "${COMPOSE_PROJECT}_prosody_data" "prosody_data"
+	restore_volume "${COMPOSE_PROJECT}_jitsi_web_config" "jitsi_web_config"
+	restore_volume "${COMPOSE_PROJECT}_jitsi_prosody_config" "jitsi_prosody_config"
+	restore_volume "${COMPOSE_PROJECT}_jitsi_jicofo_config" "jitsi_jicofo_config"
+	restore_volume "${COMPOSE_PROJECT}_jitsi_jvb_config" "jitsi_jvb_config"
+	restore_volume "${COMPOSE_PROJECT}_reverse_proxy_data" "reverse_proxy_data"
+	restore_volume "${COMPOSE_PROJECT}_reverse_proxy_config" "reverse_proxy_config"
 
 	echo "restore complete: ${BACKUP_DIR}"
 }

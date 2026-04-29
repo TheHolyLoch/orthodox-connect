@@ -10,8 +10,9 @@ cd "${ROOT_DIR}"
 [ -f .env ] && source .env || { echo "error: missing .env file" && exit 1; }
 
 BACKUP_ROOT="${BACKUP_ROOT:-./backups}"
-BACKUP_TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
+BACKUP_TIMESTAMP="$(date -u +"${BACKUP_TIMESTAMP_FORMAT:-%Y%m%dT%H%M%SZ}")"
 BACKUP_DIR="${BACKUP_ROOT%/}/${BACKUP_TIMESTAMP}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-orthodox_connect}"
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || { echo "error: missing required command: $1" && exit 1; }
@@ -75,18 +76,21 @@ main() {
 		--no-privileges \
 		> "${BACKUP_DIR}/postgres/${POSTGRES_DB}.sql"
 
+	copy_if_present .env.example "files/.env.example"
+	copy_if_present docs "files/docs"
+	copy_if_present docker-compose.yml "files/docker-compose.yml"
 	copy_if_present prosody "files/prosody"
 	copy_if_present jitsi "files/jitsi"
 	copy_if_present reverse-proxy "files/reverse-proxy"
 	copy_if_present portal/migrations "files/portal/migrations"
 
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_prosody_data" "prosody_data"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_web_config" "jitsi_web_config"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_prosody_config" "jitsi_prosody_config"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_jicofo_config" "jitsi_jicofo_config"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_jitsi_jvb_config" "jitsi_jvb_config"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_reverse_proxy_data" "reverse_proxy_data"
-	backup_volume "${COMPOSE_PROJECT_NAME:-orthodox-connect}_reverse_proxy_config" "reverse_proxy_config"
+	backup_volume "${COMPOSE_PROJECT}_prosody_data" "prosody_data"
+	backup_volume "${COMPOSE_PROJECT}_jitsi_web_config" "jitsi_web_config"
+	backup_volume "${COMPOSE_PROJECT}_jitsi_prosody_config" "jitsi_prosody_config"
+	backup_volume "${COMPOSE_PROJECT}_jitsi_jicofo_config" "jitsi_jicofo_config"
+	backup_volume "${COMPOSE_PROJECT}_jitsi_jvb_config" "jitsi_jvb_config"
+	backup_volume "${COMPOSE_PROJECT}_reverse_proxy_data" "reverse_proxy_data"
+	backup_volume "${COMPOSE_PROJECT}_reverse_proxy_config" "reverse_proxy_config"
 
 	write_manifest
 
