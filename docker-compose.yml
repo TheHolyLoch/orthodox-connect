@@ -60,6 +60,7 @@ services:
       PORTAL_INVITE_TOKEN_BYTES: "${PORTAL_INVITE_TOKEN_BYTES:-32}"
       PORTAL_SECRET_KEY_FILE: "/run/secrets/portal_secret_key"
       XMPP_DOMAIN: "${XMPP_DOMAIN}"
+      XMPP_MUC_DOMAIN: "${XMPP_MUC_DOMAIN}"
       XMPP_PROVISIONING_TOKEN_FILE: "/run/secrets/xmpp_provisioning_token"
       XMPP_PROVISIONING_URL: "${XMPP_PROVISIONING_URL:-http://prosody:5280/orthodox_provisioning/account}"
       JITSI_JWT_APP_ID: "${JITSI_JWT_APP_ID}"

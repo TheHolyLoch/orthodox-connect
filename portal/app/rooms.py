@@ -2,11 +2,15 @@
 # orthodox-connect/portal/app/rooms.py
 
 import json
+import re
+import urllib.error
+import urllib.request
 
-from portal.app import db
+from portal.app import config, db
 
 
 ADMIN_ROLES  = {'diocesan_admin', 'parish_admin', 'platform_admin'}
+RESERVED_ROOM_NODES = {'admin', 'administrator', 'clergy', 'conference', 'monastic', 'prosody', 'root', 'support'}
 ROOM_SCOPES  = {'admin_only', 'clergy_only', 'group_only', 'invite_only', 'monastic_only', 'public_to_members'}
 ROOM_ROLES   = {'admin', 'member', 'moderator'}
 USER_ALLOWED = {'approved'}
@@ -22,6 +26,10 @@ class RoomDeniedError(RoomAccessError):
 
 class RoomInputError(RoomAccessError):
 	'''Raised when room input is invalid.'''
+
+
+class RoomProvisioningError(RoomAccessError):
+	'''Raised when MUC room provisioning fails.'''
 
 
 def add_room_membership(room_id: str, user_id: str, actor_user_id: str, role: str = 'member') -> dict:
@@ -211,6 +219,8 @@ def create_room(
 					name,
 					slug,
 					xmpp_room_jid,
+					muc_provisioning_status,
+					muc_provisioning_error,
 					privacy_level,
 					created_at,
 					updated_at
@@ -298,6 +308,83 @@ def change_room_access(actor_user_id: str, room_id: str, privacy_level: str, gro
 	return updated_room
 
 
+def build_muc_room_jid(cursor, room: dict) -> str:
+	'''
+	Build a safe MUC JID for a portal room.
+
+	:param cursor: Open database cursor
+	:param room: Room record
+	'''
+
+	if room['xmpp_room_jid']:
+		return room['xmpp_room_jid']
+
+	node = re.sub(r'[^a-z0-9_.-]+', '-', (room['slug'] or room['name']).lower()).strip('._-')
+
+	if not node or len(node) < 3 or node in RESERVED_ROOM_NODES:
+		node = f'room-{str(room["id"])[:8]}'
+
+	node     = node[:48].strip('._-') or f'room-{str(room["id"])[:8]}'
+	room_jid = f'{node}@{config.xmpp_muc_domain()}'
+
+	cursor.execute('SELECT id FROM rooms WHERE xmpp_room_jid = %s AND id != %s', (room_jid, room['id']))
+
+	if cursor.fetchone():
+		room_jid = f'{node}-{str(room["id"])[:8]}@{config.xmpp_muc_domain()}'
+
+	return room_jid
+
+
+def call_prosody_room(payload: dict) -> dict:
+	'''
+	Send a MUC provisioning request to Prosody.
+
+	:param payload: Provisioning payload
+	'''
+
+	body    = json.dumps(payload).encode('utf-8')
+	request = urllib.request.Request(
+		config.xmpp_provisioning_url(),
+		data=body,
+		headers={
+			'Authorization': f'Bearer {config.xmpp_provisioning_token()}',
+			'Content-Type': 'application/json',
+			'Host': config.xmpp_domain(),
+		},
+		method='POST'
+	)
+
+	try:
+		with urllib.request.urlopen(request, timeout=10) as response:
+			return json.loads(response.read().decode('utf-8'))
+	except urllib.error.HTTPError as error:
+		raise RoomProvisioningError(read_prosody_error(error)) from error
+	except (OSError, json.JSONDecodeError) as error:
+		raise RoomProvisioningError(str(error)) from error
+
+
+def eligible_room_member_jids(cursor, room: dict) -> list[str]:
+	'''
+	Return provisioned XMPP JIDs allowed to access a room.
+
+	:param cursor: Open database cursor
+	:param room: Room record
+	'''
+
+	cursor.execute(
+		'''
+		SELECT id, xmpp_jid
+		FROM users
+		WHERE status = 'approved'
+			AND xmpp_jid IS NOT NULL
+			AND xmpp_provisioning_status = 'provisioned'
+		ORDER BY xmpp_jid ASC
+		'''
+	)
+
+	return [user['xmpp_jid'] for user in cursor.fetchall() if can_access_room_record(cursor, room, str(user['id']))]
+
+
 def fetch_room(cursor, room_id: str) -> dict | None:
 	'''
 	Return a room record by ID.
@@ -315,6 +402,8 @@ def fetch_room(cursor, room_id: str) -> dict | None:
 			name,
 			slug,
 			xmpp_room_jid,
+			muc_provisioning_status,
+			muc_provisioning_error,
 			privacy_level,
 			created_at,
 			updated_at
@@ -325,6 +414,134 @@ def fetch_room(cursor, room_id: str) -> dict | None:
 	)
 
 	return cursor.fetchone()
+
+
+def provision_muc_room(room_id: str, actor_user_id: str) -> dict:
+	'''
+	Provision a portal room into Prosody MUC.
+
+	:param room_id: Portal room ID
+	:param actor_user_id: Acting admin user ID
+	'''
+
+	with db.connect_database() as connection:
+		with connection.cursor() as cursor:
+			require_admin(cursor, actor_user_id)
+			room = fetch_room(cursor, room_id)
+
+			if not room:
+				raise RoomInputError('room not found')
+
+			room_jid = build_muc_room_jid(cursor, room)
+			payload  = {
+				'action': 'create_room',
+				'description': f'Orthodox Connect {room["privacy_level"]} room',
+				'members': eligible_room_member_jids(cursor, room),
+				'members_only': True,
+				'moderated': room['privacy_level'] == 'admin_only',
+				'name': room['name'],
+				'privacy_level': room['privacy_level'],
+				'public': False,
+				'room_jid': room_jid,
+			}
+
+			try:
+				result = call_prosody_room(payload)
+			except RoomProvisioningError as error:
+				record_muc_failure(cursor, actor_user_id, room, str(error), room_jid)
+				connection.commit()
+				raise
+
+			cursor.execute(
+				'''
+				UPDATE rooms
+				SET
+					xmpp_room_jid = %s,
+					muc_provisioning_status = 'provisioned',
+					muc_provisioning_error = NULL,
+					muc_provisioned_at = now(),
+					updated_at = now()
+				WHERE id = %s
+				RETURNING
+					id,
+					created_by_user_id,
+					group_id,
+					name,
+					slug,
+					xmpp_room_jid,
+					muc_provisioning_status,
+					muc_provisioning_error,
+					privacy_level,
+					created_at,
+					updated_at
+				''',
+				(room_jid, room_id)
+			)
+			updated_room = cursor.fetchone()
+			action       = 'muc_room_created' if result.get('status') == 'created' else 'muc_room_updated'
+			write_room_audit(cursor, actor_user_id, None, updated_room, action, {'xmpp_room_jid': room_jid, 'members': len(payload['members'])})
+
+		connection.commit()
+
+	return updated_room
+
+
+def read_prosody_error(error: urllib.error.HTTPError) -> str:
+	'''
+	Return a safe error message from a failed Prosody response.
+
+	:param error: HTTP error
+	'''
+
+	try:
+		body = error.read().decode('utf-8')
+		data = json.loads(body)
+	except (OSError, json.JSONDecodeError):
+		return f'prosody muc provisioning failed with HTTP {error.code}'
+
+	return data.get('error') or f'prosody muc provisioning failed with HTTP {error.code}'
+
+
+def record_muc_failure(cursor, actor_user_id: str, room: dict, error: str, room_jid: str):
+	'''
+	Record a MUC provisioning failure.
+
+	:param cursor: Open database cursor
+	:param actor_user_id: Acting admin user ID
+	:param room: Room record
+	:param error: Failure message
+	:param room_jid: Attempted MUC room JID
+	'''
+
+	cursor.execute(
+		'''
+		UPDATE rooms
+		SET
+			muc_provisioning_status = 'failed',
+			muc_provisioning_error = %s,
+			updated_at = now()
+		WHERE id = %s
+		''',
+		(error, room['id'])
+	)
+	write_room_audit(cursor, actor_user_id, None, room, 'muc_provisioning_failure', {'error': error, 'xmpp_room_jid': room_jid})
+
+
+def require_admin(cursor, actor_user_id: str):
+	'''
+	Require an approved admin actor for room provisioning.
+
+	:param cursor: Open database cursor
+	:param actor_user_id: Acting user ID
+	'''
+
+	user = fetch_user(cursor, actor_user_id)
+
+	if not user or user['status'] != 'approved':
+		raise RoomDeniedError('admin user is required')
+
+	if not has_any_scoped_role(cursor, actor_user_id, ADMIN_ROLES):
+		raise RoomDeniedError('admin role is required')
 
 
 def fetch_user(cursor, user_id: str) -> dict | None:

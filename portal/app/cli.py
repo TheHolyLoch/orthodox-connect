@@ -228,6 +228,17 @@ def add_provision_xmpp_user_parser(subparsers):
 	parser.set_defaults(command=handle_provision_xmpp_user)
 
 
+def add_provision_muc_room_parser(subparsers):
+	'''
+	Add the provision-muc-room subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('provision-muc-room')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--room-id', required=True)
+	parser.set_defaults(command=handle_provision_muc_room)
+
+
 def add_approve_verification_parser(subparsers):
 	'''
 	Add the approve-verification subcommand parser.
@@ -394,6 +405,7 @@ def build_parser() -> argparse.ArgumentParser:
 	add_list_rooms_parser(subparsers)
 	add_list_verifications_parser(subparsers)
 	add_migrate_parser(subparsers)
+	add_provision_muc_room_parser(subparsers)
 	add_provision_xmpp_user_parser(subparsers)
 	add_approve_verification_parser(subparsers)
 	add_reject_verification_parser(subparsers)
@@ -654,6 +666,16 @@ def handle_provision_xmpp_user(args):
 	'''
 
 	print_json(xmpp.provision_user(args.user_id, args.actor_user_id, args.xmpp_password))
+
+
+def handle_provision_muc_room(args):
+	'''
+	Handle provision-muc-room command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(rooms.provision_muc_room(args.room_id, args.actor_user_id))
 
 
 def handle_reject_verification(args):

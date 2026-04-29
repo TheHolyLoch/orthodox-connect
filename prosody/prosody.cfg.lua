@@ -57,6 +57,7 @@ http_ports  = { 5280 }
 https_ports = { }
 
 orthodox_provisioning_domain     = xmpp_domain
+orthodox_provisioning_muc_domain = xmpp_muc_domain
 orthodox_provisioning_token_file = xmpp_provisioning_token_file
 
 log = {

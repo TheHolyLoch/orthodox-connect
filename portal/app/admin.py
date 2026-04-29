@@ -147,6 +147,9 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			elif route == '/admin/groups/members/remove':
 				handle_remove_group_member(form, actor_id)
 				message = 'Group membership removed.'
+			elif route == '/admin/rooms/provision-muc':
+				room = handle_provision_muc_room(form, actor_id)
+				message = f'MUC room provisioned: {room["xmpp_room_jid"]}'
 			elif route == '/admin/invites/revoke':
 				handle_revoke_invite(form, actor_id)
 				message = 'Invite revoked.'
@@ -628,6 +631,19 @@ def handle_provision_xmpp(form: dict, actor_id: str | None) -> dict:
 	return xmpp.provision_user(single_value(form, 'user_id'), actor_id, single_value(form, 'xmpp_password'))
 
 
+def handle_provision_muc_room(form: dict, actor_id: str | None) -> dict:
+	'''
+	Provision a portal room into Prosody MUC from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+
+	return rooms.provision_muc_room(single_value(form, 'room_id'), actor_id)
+
+
 def handle_reject_verification(form: dict, actor_id: str | None):
 	'''
 	Reject a verification request from the admin UI.
@@ -802,6 +818,8 @@ def list_rooms(cursor) -> list[dict]:
 			name,
 			slug,
 			xmpp_room_jid,
+			muc_provisioning_status,
+			muc_provisioning_error,
 			privacy_level,
 			created_at,
 			updated_at
@@ -1335,7 +1353,23 @@ def render_rooms(room_records: list[dict]) -> str:
 	:param room_records: Room records
 	'''
 
-	return render_table('Rooms and Channels', room_records, ['name', 'slug', 'privacy_level', 'group_id', 'xmpp_room_jid', 'created_by_user_id', 'created_at'])
+	rows = []
+
+	for room in room_records:
+		row           = dict(room)
+		row['action'] = f'''
+<form class="inline" method="post" action="/admin/rooms/provision-muc">
+	<input type="hidden" name="room_id" value="{escape(room['id'])}">
+	<button type="submit">Provision Chat Room</button>
+</form>
+'''
+		rows.append(row)
+
+	return render_table(
+		'Rooms and Channels',
+		rows,
+		['name', 'slug', 'privacy_level', 'group_id', 'xmpp_room_jid', 'muc_provisioning_status', 'muc_provisioning_error', 'created_by_user_id', 'created_at', 'action']
+	)
 
 
 def render_table(title: str, rows: list[dict], columns: list[str]) -> str:

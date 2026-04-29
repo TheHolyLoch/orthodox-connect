@@ -139,6 +139,14 @@ def xmpp_domain() -> str:
 	return env_or_file('XMPP_DOMAIN')
 
 
+def xmpp_muc_domain() -> str:
+	'''
+	Return the main Orthodox Connect MUC domain.
+	'''
+
+	return env_or_file('XMPP_MUC_DOMAIN')
+
+
 def xmpp_provisioning_token() -> str:
 	'''
 	Return the internal Prosody provisioning token.
