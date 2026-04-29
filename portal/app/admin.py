@@ -11,7 +11,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from portal.app import auth, config, db, groups as portal_groups, invites, rooms, verifications
+from portal.app import auth, config, db, groups as portal_groups, invites, rooms, verifications, xmpp
 
 
 ADMIN_ROLES = rooms.ADMIN_ROLES
@@ -150,6 +150,12 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			elif route == '/admin/invites/revoke':
 				handle_revoke_invite(form, actor_id)
 				message = 'Invite revoked.'
+			elif route == '/admin/xmpp/provision':
+				user = handle_provision_xmpp(form, actor_id)
+				message = f'XMPP account provisioned: {user["xmpp_jid"]}'
+			elif route == '/admin/xmpp/disable':
+				handle_disable_xmpp(form, actor_id)
+				message = 'XMPP account disabled.'
 			elif route == '/admin/verifications/approve':
 				handle_approve_verification(form, actor_id)
 				message = 'Verification approved.'
@@ -160,7 +166,7 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 				self.send_error(404)
 
 				return
-		except (AdminUiError, portal_groups.GroupError, invites.InviteError, verifications.VerificationError) as error:
+		except (AdminUiError, portal_groups.GroupError, invites.InviteError, verifications.VerificationError, xmpp.XmppProvisioningError) as error:
 			message = f'Error: {error}'
 
 		self.send_html(render_admin_page(current_user, {'message': [message]}))
@@ -596,6 +602,32 @@ def handle_create_invite(form: dict, actor_id: str | None) -> dict:
 	)
 
 
+def handle_disable_xmpp(form: dict, actor_id: str | None) -> dict:
+	'''
+	Disable a user's XMPP account from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+
+	return xmpp.disable_user(single_value(form, 'user_id'), actor_id)
+
+
+def handle_provision_xmpp(form: dict, actor_id: str | None) -> dict:
+	'''
+	Provision a user's XMPP account from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+
+	return xmpp.provision_user(single_value(form, 'user_id'), actor_id, single_value(form, 'xmpp_password'))
+
+
 def handle_reject_verification(form: dict, actor_id: str | None):
 	'''
 	Reject a verification request from the admin UI.
@@ -795,6 +827,8 @@ def list_users(cursor) -> list[dict]:
 			u.display_name,
 			u.email,
 			u.xmpp_jid,
+			u.xmpp_provisioning_status,
+			u.xmpp_provisioning_error,
 			u.status,
 			u.created_at,
 			u.updated_at,
@@ -1335,7 +1369,45 @@ def render_users(users: list[dict]) -> str:
 	:param users: User records
 	'''
 
-	return render_table('Users', users, ['display_name', 'email', 'xmpp_jid', 'status', 'roles', 'groups', 'created_at'])
+	rows = []
+
+	for user in users:
+		row           = dict(user)
+		row['action'] = render_xmpp_user_action(user)
+		rows.append(row)
+
+	return render_table(
+		'Users',
+		rows,
+		['display_name', 'email', 'xmpp_jid', 'xmpp_provisioning_status', 'xmpp_provisioning_error', 'status', 'roles', 'groups', 'created_at', 'action']
+	)
+
+
+def render_xmpp_user_action(user: dict) -> str:
+	'''
+	Return XMPP provisioning controls for a user row.
+
+	:param user: User record
+	'''
+
+	if user['status'] == 'approved':
+		return f'''
+<form class="inline" method="post" action="/admin/xmpp/provision">
+	<input type="hidden" name="user_id" value="{escape(user['id'])}">
+	<input name="xmpp_password" type="password" placeholder="Temporary XMPP password" required>
+	<button type="submit">Provision Chat</button>
+</form>
+'''
+
+	if user['status'] == 'suspended' and user['xmpp_jid']:
+		return f'''
+<form class="inline" method="post" action="/admin/xmpp/disable">
+	<input type="hidden" name="user_id" value="{escape(user['id'])}">
+	<button class="secondary" type="submit">Disable Chat</button>
+</form>
+'''
+
+	return ''
 
 
 def render_cell(row: dict, column: str) -> str:

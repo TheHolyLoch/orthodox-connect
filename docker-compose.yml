@@ -59,6 +59,9 @@ services:
       PORTAL_ADMIN_PORT: "${PORTAL_ADMIN_PORT:-8000}"
       PORTAL_INVITE_TOKEN_BYTES: "${PORTAL_INVITE_TOKEN_BYTES:-32}"
       PORTAL_SECRET_KEY_FILE: "/run/secrets/portal_secret_key"
+      XMPP_DOMAIN: "${XMPP_DOMAIN}"
+      XMPP_PROVISIONING_TOKEN_FILE: "/run/secrets/xmpp_provisioning_token"
+      XMPP_PROVISIONING_URL: "${XMPP_PROVISIONING_URL:-http://prosody:5280/orthodox_provisioning/account}"
       JITSI_JWT_APP_ID: "${JITSI_JWT_APP_ID}"
       JITSI_JWT_APP_SECRET_FILE: "/run/secrets/jitsi_jwt_app_secret"
       JITSI_MEETING_CREATOR_ROLES: "${JITSI_MEETING_CREATOR_ROLES}"
@@ -68,6 +71,7 @@ services:
     secrets:
       - postgres_password
       - portal_secret_key
+      - xmpp_provisioning_token
       - jitsi_jwt_app_secret
     networks:
       - internal
@@ -114,12 +118,16 @@ services:
       XMPP_DOMAIN: "${XMPP_DOMAIN}"
       XMPP_ADMIN_JID: "${XMPP_ADMIN_JID}"
       XMPP_MUC_DOMAIN: "${XMPP_MUC_DOMAIN}"
+      XMPP_PROVISIONING_TOKEN_FILE: "/run/secrets/xmpp_provisioning_token"
       XMPP_REGISTRATION_ENABLED: "${XMPP_REGISTRATION_ENABLED:-false}"
+    secrets:
+      - xmpp_provisioning_token
     networks:
       - internal
       - xmpp
     volumes:
       - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+      - ./prosody/mod_orthodox_provisioning.lua:/usr/lib/prosody/modules/mod_orthodox_provisioning.lua:ro
       - prosody_data:/var/lib/prosody
     healthcheck:
       test: ["CMD", "prosodyctl", "check", "config"]
@@ -200,3 +208,5 @@ secrets:
     environment: PORTAL_SECRET_KEY
   jitsi_jwt_app_secret:
     environment: JITSI_JWT_APP_SECRET
+  xmpp_provisioning_token:
+    environment: XMPP_PROVISIONING_TOKEN

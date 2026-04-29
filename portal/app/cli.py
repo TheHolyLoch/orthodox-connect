@@ -9,7 +9,7 @@ import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import auth, groups as portal_groups, invites, meetings, migrations, rooms, verifications
+from portal.app import auth, groups as portal_groups, invites, meetings, migrations, rooms, verifications, xmpp
 
 
 def add_create_invite_parser(subparsers):
@@ -216,6 +216,18 @@ def add_list_verifications_parser(subparsers):
 	parser.set_defaults(command=handle_list_verifications)
 
 
+def add_provision_xmpp_user_parser(subparsers):
+	'''
+	Add the provision-xmpp-user subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('provision-xmpp-user')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.add_argument('--xmpp-password', required=True)
+	parser.set_defaults(command=handle_provision_xmpp_user)
+
+
 def add_approve_verification_parser(subparsers):
 	'''
 	Add the approve-verification subcommand parser.
@@ -303,6 +315,17 @@ def add_remove_group_member_parser(subparsers):
 	parser.set_defaults(command=handle_remove_group_member)
 
 
+def add_disable_xmpp_user_parser(subparsers):
+	'''
+	Add the disable-xmpp-user subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('disable-xmpp-user')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_disable_xmpp_user)
+
+
 def add_submit_verification_parser(subparsers):
 	'''
 	Add the submit-verification subcommand parser.
@@ -361,6 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
 	add_create_meeting_parser(subparsers)
 	add_create_meeting_guest_parser(subparsers)
 	add_create_room_parser(subparsers)
+	add_disable_xmpp_user_parser(subparsers)
 	add_issue_meeting_guest_token_parser(subparsers)
 	add_issue_meeting_user_token_parser(subparsers)
 	add_list_group_memberships_parser(subparsers)
@@ -370,6 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
 	add_list_rooms_parser(subparsers)
 	add_list_verifications_parser(subparsers)
 	add_migrate_parser(subparsers)
+	add_provision_xmpp_user_parser(subparsers)
 	add_approve_verification_parser(subparsers)
 	add_reject_verification_parser(subparsers)
 	add_redeem_invite_parser(subparsers)
@@ -512,6 +537,16 @@ def handle_create_meeting_guest(args):
 	)
 
 
+def handle_disable_xmpp_user(args):
+	'''
+	Handle disable-xmpp-user command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(xmpp.disable_user(args.user_id, args.actor_user_id))
+
+
 def handle_create_room(args):
 	'''
 	Handle create-room command execution.
@@ -609,6 +644,16 @@ def handle_migrate(args):
 	'''
 
 	print_json({'applied': migrations.apply_migrations()})
+
+
+def handle_provision_xmpp_user(args):
+	'''
+	Handle provision-xmpp-user command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(xmpp.provision_user(args.user_id, args.actor_user_id, args.xmpp_password))
 
 
 def handle_reject_verification(args):
@@ -739,7 +784,8 @@ def main() -> int:
 		meetings.MeetingAccessError,
 		portal_groups.GroupError,
 		rooms.RoomAccessError,
-		verifications.VerificationError
+		verifications.VerificationError,
+		xmpp.XmppProvisioningError
 	) as e:
 		print_json({'error': str(e)})
 

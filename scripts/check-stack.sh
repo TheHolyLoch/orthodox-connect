@@ -58,3 +58,17 @@ check_url "portal health" "${PORTAL_DOMAIN}" "/healthz"
 check_url "chat frontend" "${CHAT_DOMAIN}" "/"
 check_route_status "xmpp websocket route" "${CHAT_DOMAIN}" "/xmpp-websocket"
 check_url "meet placeholder" "${MEET_DOMAIN}" "/healthz"
+
+if docker compose --env-file "${ENV_FILE}" exec -T prosody prosodyctl check config >/dev/null; then
+	echo "ok: prosody config"
+else
+	echo "error: prosody config"
+	exit 1
+fi
+
+if docker compose --env-file "${ENV_FILE}" exec -T prosody sh -c '[ "${XMPP_REGISTRATION_ENABLED}" = "false" ]'; then
+	echo "ok: prosody registration disabled"
+else
+	echo "error: prosody registration disabled"
+	exit 1
+fi

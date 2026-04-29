@@ -129,3 +129,27 @@ def jitsi_xmpp_domain() -> str:
 	'''
 
 	return env_or_file('JITSI_XMPP_DOMAIN')
+
+
+def xmpp_domain() -> str:
+	'''
+	Return the main Orthodox Connect XMPP domain.
+	'''
+
+	return env_or_file('XMPP_DOMAIN')
+
+
+def xmpp_provisioning_token() -> str:
+	'''
+	Return the internal Prosody provisioning token.
+	'''
+
+	return env_or_file('XMPP_PROVISIONING_TOKEN')
+
+
+def xmpp_provisioning_url() -> str:
+	'''
+	Return the internal Prosody provisioning endpoint URL.
+	'''
+
+	return env_or_file('XMPP_PROVISIONING_URL').rstrip('/')
