@@ -125,6 +125,7 @@ services:
     networks:
       - internal
       - xmpp
+      - public
     ports:
       - "5222:5222"
       - "5269:5269"
