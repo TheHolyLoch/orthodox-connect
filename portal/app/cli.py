@@ -9,7 +9,7 @@ import sys
 
 from datetime import datetime, timedelta, timezone
 
-from portal.app import auth, invites, meetings, migrations, rooms, verifications
+from portal.app import auth, groups as portal_groups, invites, meetings, migrations, rooms, verifications
 
 
 def add_create_invite_parser(subparsers):
@@ -57,6 +57,19 @@ def add_create_meeting_guest_parser(subparsers):
 	parser.set_defaults(command=handle_create_meeting_guest)
 
 
+def add_add_group_member_parser(subparsers):
+	'''
+	Add the add-group-member subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('add-group-member')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--group-id', required=True)
+	parser.add_argument('--status', choices=['active', 'invited', 'pending', 'removed', 'suspended'], default='active')
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_add_group_member)
+
+
 def add_add_room_member_parser(subparsers):
 	'''
 	Add the add-room-member subcommand parser.
@@ -68,6 +81,21 @@ def add_add_room_member_parser(subparsers):
 	parser.add_argument('--room-id', required=True)
 	parser.add_argument('--user-id', required=True)
 	parser.set_defaults(command=handle_add_room_member)
+
+
+def add_create_group_parser(subparsers):
+	'''
+	Add the create-group subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('create-group')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--description')
+	parser.add_argument('--name', required=True)
+	parser.add_argument('--parent-group-id')
+	parser.add_argument('--slug', required=True)
+	parser.add_argument('--type', choices=sorted(portal_groups.GROUP_TYPES), required=True)
+	parser.set_defaults(command=handle_create_group)
 
 
 def add_can_access_room_parser(subparsers):
@@ -128,6 +156,26 @@ def add_list_invites_parser(subparsers):
 
 	parser = subparsers.add_parser('list-invites')
 	parser.set_defaults(command=handle_list_invites)
+
+
+def add_list_group_memberships_parser(subparsers):
+	'''
+	Add the list-group-memberships subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('list-group-memberships')
+	parser.add_argument('--group-id')
+	parser.add_argument('--user-id')
+	parser.set_defaults(command=handle_list_group_memberships)
+
+
+def add_list_groups_parser(subparsers):
+	'''
+	Add the list-groups subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('list-groups')
+	parser.set_defaults(command=handle_list_groups)
 
 
 def add_list_rooms_parser(subparsers):
@@ -243,6 +291,18 @@ def add_remove_room_member_parser(subparsers):
 	parser.set_defaults(command=handle_remove_room_member)
 
 
+def add_remove_group_member_parser(subparsers):
+	'''
+	Add the remove-group-member subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('remove-group-member')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--group-id', required=True)
+	parser.add_argument('--user-id', required=True)
+	parser.set_defaults(command=handle_remove_group_member)
+
+
 def add_submit_verification_parser(subparsers):
 	'''
 	Add the submit-verification subcommand parser.
@@ -267,6 +327,22 @@ def add_revoke_invite_parser(subparsers):
 	parser.set_defaults(command=handle_revoke_invite)
 
 
+def add_update_group_parser(subparsers):
+	'''
+	Add the update-group subcommand parser.
+	'''
+
+	parser = subparsers.add_parser('update-group')
+	parser.add_argument('--actor-user-id', required=True)
+	parser.add_argument('--description')
+	parser.add_argument('--group-id', required=True)
+	parser.add_argument('--name', required=True)
+	parser.add_argument('--parent-group-id')
+	parser.add_argument('--slug', required=True)
+	parser.add_argument('--type', choices=sorted(portal_groups.GROUP_TYPES), required=True)
+	parser.set_defaults(command=handle_update_group)
+
+
 def build_parser() -> argparse.ArgumentParser:
 	'''
 	Build the portal CLI argument parser.
@@ -275,16 +351,20 @@ def build_parser() -> argparse.ArgumentParser:
 	parser     = argparse.ArgumentParser(prog='orthodox-connect-portal')
 	subparsers = parser.add_subparsers(dest='command_name')
 
+	add_add_group_member_parser(subparsers)
 	add_add_room_member_parser(subparsers)
 	add_bootstrap_admin_parser(subparsers)
 	add_can_access_room_parser(subparsers)
 	add_change_room_access_parser(subparsers)
+	add_create_group_parser(subparsers)
 	add_create_invite_parser(subparsers)
 	add_create_meeting_parser(subparsers)
 	add_create_meeting_guest_parser(subparsers)
 	add_create_room_parser(subparsers)
 	add_issue_meeting_guest_token_parser(subparsers)
 	add_issue_meeting_user_token_parser(subparsers)
+	add_list_group_memberships_parser(subparsers)
+	add_list_groups_parser(subparsers)
 	add_list_invites_parser(subparsers)
 	add_list_meetings_parser(subparsers)
 	add_list_rooms_parser(subparsers)
@@ -293,11 +373,23 @@ def build_parser() -> argparse.ArgumentParser:
 	add_approve_verification_parser(subparsers)
 	add_reject_verification_parser(subparsers)
 	add_redeem_invite_parser(subparsers)
+	add_remove_group_member_parser(subparsers)
 	add_remove_room_member_parser(subparsers)
 	add_revoke_invite_parser(subparsers)
 	add_submit_verification_parser(subparsers)
+	add_update_group_parser(subparsers)
 
 	return parser
+
+
+def handle_add_group_member(args):
+	'''
+	Handle add-group-member command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(portal_groups.add_membership(args.group_id, args.user_id, args.actor_user_id, args.status))
 
 
 def handle_add_room_member(args):
@@ -362,6 +454,25 @@ def handle_create_invite(args):
 	)
 
 	print_json(invite)
+
+
+def handle_create_group(args):
+	'''
+	Handle create-group command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(
+		portal_groups.create_group(
+			actor_user_id=args.actor_user_id,
+			description=args.description,
+			group_type=args.type,
+			name=args.name,
+			parent_group_id=args.parent_group_id,
+			slug=args.slug
+		)
+	)
 
 
 def handle_create_meeting(args):
@@ -438,6 +549,26 @@ def handle_list_invites(args):
 	'''
 
 	print_json(invites.list_invites())
+
+
+def handle_list_group_memberships(args):
+	'''
+	Handle list-group-memberships command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(portal_groups.list_memberships(args.group_id, args.user_id))
+
+
+def handle_list_groups(args):
+	'''
+	Handle list-groups command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(portal_groups.list_groups())
 
 
 def handle_list_meetings(args):
@@ -527,6 +658,16 @@ def handle_issue_meeting_user_token(args):
 	print_json(meetings.issue_user_token(args.meeting_id, args.user_id, args.issued_by_user_id, args.ttl_seconds))
 
 
+def handle_remove_group_member(args):
+	'''
+	Handle remove-group-member command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(portal_groups.remove_membership(args.group_id, args.user_id, args.actor_user_id))
+
+
 def handle_remove_room_member(args):
 	'''
 	Handle remove-room-member command execution.
@@ -557,6 +698,26 @@ def handle_revoke_invite(args):
 	print_json(invites.revoke_invite(args.invite_id, args.actor_user_id))
 
 
+def handle_update_group(args):
+	'''
+	Handle update-group command execution.
+
+	:param args: Parsed command arguments
+	'''
+
+	print_json(
+		portal_groups.update_group(
+			actor_user_id=args.actor_user_id,
+			description=args.description,
+			group_id=args.group_id,
+			group_type=args.type,
+			name=args.name,
+			parent_group_id=args.parent_group_id,
+			slug=args.slug
+		)
+	)
+
+
 def main() -> int:
 	'''
 	Run the portal CLI.
@@ -572,7 +733,14 @@ def main() -> int:
 
 	try:
 		args.command(args)
-	except (auth.AuthError, invites.InviteError, meetings.MeetingAccessError, rooms.RoomAccessError, verifications.VerificationError) as e:
+	except (
+		auth.AuthError,
+		invites.InviteError,
+		meetings.MeetingAccessError,
+		portal_groups.GroupError,
+		rooms.RoomAccessError,
+		verifications.VerificationError
+	) as e:
 		print_json({'error': str(e)})
 
 		return 1

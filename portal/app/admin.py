@@ -11,7 +11,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from portal.app import auth, config, db, invites, rooms, verifications
+from portal.app import auth, config, db, groups as portal_groups, invites, rooms, verifications
 
 
 ADMIN_ROLES = rooms.ADMIN_ROLES
@@ -135,6 +135,18 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 			if route == '/admin/invites/create':
 				invite = handle_create_invite(form, actor_id)
 				message = f'Invite created. Token: {invite["token"]}'
+			elif route == '/admin/groups/create':
+				handle_create_group(form, actor_id)
+				message = 'Group created.'
+			elif route == '/admin/groups/update':
+				handle_update_group(form, actor_id)
+				message = 'Group updated.'
+			elif route == '/admin/groups/members/add':
+				handle_add_group_member(form, actor_id)
+				message = 'Group membership granted.'
+			elif route == '/admin/groups/members/remove':
+				handle_remove_group_member(form, actor_id)
+				message = 'Group membership removed.'
 			elif route == '/admin/invites/revoke':
 				handle_revoke_invite(form, actor_id)
 				message = 'Invite revoked.'
@@ -148,7 +160,7 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 				self.send_error(404)
 
 				return
-		except (AdminUiError, invites.InviteError, verifications.VerificationError) as error:
+		except (AdminUiError, portal_groups.GroupError, invites.InviteError, verifications.VerificationError) as error:
 			message = f'Error: {error}'
 
 		self.send_html(render_admin_page(current_user, {'message': [message]}))
@@ -486,6 +498,7 @@ def fetch_admin_state(actor_id: str | None) -> dict:
 				return {
 					'authorized': False,
 					'audit_events': [],
+					'group_memberships': [],
 					'groups': [],
 					'invites': [],
 					'roles': [],
@@ -497,7 +510,8 @@ def fetch_admin_state(actor_id: str | None) -> dict:
 			return {
 				'authorized': True,
 				'audit_events': list_audit_events(cursor),
-				'groups': list_groups(cursor),
+				'group_memberships': portal_groups.list_memberships(),
+				'groups': portal_groups.list_groups(),
 				'invites': list_invites(cursor),
 				'roles': list_roles(cursor),
 				'rooms': list_rooms(cursor),
@@ -516,6 +530,42 @@ def handle_approve_verification(form: dict, actor_id: str | None):
 
 	require_admin(actor_id)
 	verifications.approve_request(single_value(form, 'request_id'), actor_id, optional_value(form, 'reason'))
+
+
+def handle_add_group_member(form: dict, actor_id: str | None):
+	'''
+	Add a user to a group from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+	portal_groups.add_membership(
+		single_value(form, 'group_id'),
+		single_value(form, 'user_id'),
+		actor_id,
+		single_value(form, 'status') or 'active'
+	)
+
+
+def handle_create_group(form: dict, actor_id: str | None):
+	'''
+	Create a group from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+	portal_groups.create_group(
+		actor_id,
+		single_value(form, 'name'),
+		single_value(form, 'slug'),
+		single_value(form, 'group_type'),
+		optional_value(form, 'description'),
+		optional_value(form, 'parent_group_id')
+	)
 
 
 def handle_create_invite(form: dict, actor_id: str | None) -> dict:
@@ -558,6 +608,18 @@ def handle_reject_verification(form: dict, actor_id: str | None):
 	verifications.reject_request(single_value(form, 'request_id'), actor_id, single_value(form, 'reason'))
 
 
+def handle_remove_group_member(form: dict, actor_id: str | None):
+	'''
+	Remove a user from a group from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+	portal_groups.remove_membership(single_value(form, 'group_id'), single_value(form, 'user_id'), actor_id)
+
+
 def handle_revoke_invite(form: dict, actor_id: str | None):
 	'''
 	Revoke an invite from the admin UI.
@@ -568,6 +630,26 @@ def handle_revoke_invite(form: dict, actor_id: str | None):
 
 	require_admin(actor_id)
 	invites.revoke_invite(single_value(form, 'invite_id'), actor_id)
+
+
+def handle_update_group(form: dict, actor_id: str | None):
+	'''
+	Update a group from the admin UI.
+
+	:param form: Parsed POST form
+	:param actor_id: Acting admin user ID
+	'''
+
+	require_admin(actor_id)
+	portal_groups.update_group(
+		actor_id,
+		single_value(form, 'group_id'),
+		single_value(form, 'name'),
+		single_value(form, 'slug'),
+		single_value(form, 'group_type'),
+		optional_value(form, 'description'),
+		optional_value(form, 'parent_group_id')
+	)
 
 
 def is_admin(cursor, actor_id: str | None) -> bool:
@@ -611,32 +693,6 @@ def list_audit_events(cursor) -> list[dict]:
 		FROM audit_events
 		ORDER BY created_at DESC
 		LIMIT 100
-		'''
-	)
-
-	return cursor.fetchall()
-
-
-def list_groups(cursor) -> list[dict]:
-	'''
-	Return groups and parishes.
-
-	:param cursor: Open database cursor
-	'''
-
-	cursor.execute(
-		'''
-		SELECT
-			id,
-			parent_group_id,
-			name,
-			slug,
-			group_type,
-			description,
-			created_at,
-			updated_at
-		FROM groups
-		ORDER BY name ASC
 		'''
 	)
 
@@ -832,7 +888,8 @@ def render_account_page(current_user: dict, query: dict) -> str:
 	'''
 
 	message  = single_value(query, 'message')
-	requests = verifications.list_requests(user_id=str(current_user['id']))
+	memberships = portal_groups.list_memberships(user_id=str(current_user['id']))
+	requests    = verifications.list_requests(user_id=str(current_user['id']))
 	content  = [
 		'<!doctype html>',
 		'<html lang="en">',
@@ -853,6 +910,11 @@ def render_account_page(current_user: dict, query: dict) -> str:
 		content.append(f'<section class="{class_name}">{escape(message)}</section>')
 
 	content.append(render_verification_request_form())
+	content.append(render_table(
+		'My Groups',
+		memberships,
+		['name', 'slug', 'group_type', 'status', 'created_at']
+	))
 	content.append(render_table(
 		'My Verification Requests',
 		requests,
@@ -900,7 +962,7 @@ def render_admin_page(current_user: dict, query: dict) -> str:
 			render_invite_management(actor_id, state),
 			render_verification_management(actor_id, state),
 			render_users(state['users']),
-			render_groups(state['groups']),
+			render_groups(state),
 			render_roles(state['roles']),
 			render_rooms(state['rooms']),
 			render_audit_events(state['audit_events']),
@@ -925,14 +987,131 @@ def render_audit_events(audit_events: list[dict]) -> str:
 	)
 
 
-def render_groups(groups: list[dict]) -> str:
+def render_groups(state: dict) -> str:
 	'''
-	Return group table markup.
+	Return group management markup.
 
-	:param groups: Group records
+	:param state: Admin page state
 	'''
 
-	return render_table('Groups and Parishes', groups, ['name', 'slug', 'group_type', 'parent_group_id', 'description', 'created_at'])
+	group_options = options_markup(state['groups'], 'id', 'name')
+	user_options  = options_markup(state['users'], 'id', 'display_name')
+	rows          = []
+
+	for group in state['groups']:
+		row           = dict(group)
+		row['action'] = f'''
+<form method="post" action="/admin/groups/update">
+	<input type="hidden" name="group_id" value="{escape(group['id'])}">
+	<div class="field">
+		<label>Name</label>
+		<input name="name" value="{escape(group['name'])}" required>
+	</div>
+	<div class="field">
+		<label>Slug</label>
+		<input name="slug" value="{escape(group['slug'])}" required>
+	</div>
+	<div class="field">
+		<label>Type</label>
+		<select name="group_type" required>{group_type_options(group['group_type'])}</select>
+	</div>
+	<div class="field">
+		<label>Parent</label>
+		<select name="parent_group_id"><option value="">No parent</option>{options_markup(state['groups'], 'id', 'name', group['parent_group_id'])}</select>
+	</div>
+	<div class="field">
+		<label>Description</label>
+		<textarea name="description" rows="2">{escape(group['description'] or '')}</textarea>
+	</div>
+	<button type="submit">Update</button>
+</form>
+'''
+		rows.append(row)
+
+	return f'''
+<section>
+	<h2>Groups and Parishes</h2>
+	<div class="forms">
+		<form method="post" action="/admin/groups/create">
+			<div class="field">
+				<label for="group_name">Name</label>
+				<input id="group_name" name="name" required>
+			</div>
+			<div class="field">
+				<label for="group_slug">Slug</label>
+				<input id="group_slug" name="slug" required>
+			</div>
+			<div class="field">
+				<label for="group_type">Type</label>
+				<select id="group_type" name="group_type" required>{group_type_options()}</select>
+			</div>
+			<div class="field">
+				<label for="parent_group_id">Parent</label>
+				<select id="parent_group_id" name="parent_group_id"><option value="">No parent</option>{group_options}</select>
+			</div>
+			<div class="field">
+				<label for="group_description">Description</label>
+				<textarea id="group_description" name="description" rows="3"></textarea>
+			</div>
+			<button type="submit">Create Group</button>
+		</form>
+		<form method="post" action="/admin/groups/members/add">
+			<div class="field">
+				<label for="member_group_id">Group</label>
+				<select id="member_group_id" name="group_id" required>{group_options}</select>
+			</div>
+			<div class="field">
+				<label for="member_user_id">User</label>
+				<select id="member_user_id" name="user_id" required>{user_options}</select>
+			</div>
+			<div class="field">
+				<label for="member_status">Status</label>
+				<select id="member_status" name="status">
+					<option value="active">Active</option>
+					<option value="pending">Pending</option>
+					<option value="invited">Invited</option>
+					<option value="suspended">Suspended</option>
+				</select>
+			</div>
+			<button type="submit">Add Member</button>
+		</form>
+	</div>
+	{render_table('', rows, ['name', 'slug', 'group_type', 'parent_group_id', 'description', 'created_at', 'action'])}
+	{render_group_memberships(state['group_memberships'])}
+</section>
+'''
+
+
+def render_group_memberships(memberships: list[dict]) -> str:
+	'''
+	Return group membership management markup.
+
+	:param memberships: Group membership rows
+	'''
+
+	rows = []
+
+	for membership in memberships:
+		row = dict(membership)
+
+		if membership['status'] != 'removed':
+			row['action'] = f'''
+<form class="inline" method="post" action="/admin/groups/members/remove">
+	<input type="hidden" name="group_id" value="{escape(membership['group_id'])}">
+	<input type="hidden" name="user_id" value="{escape(membership['user_id'])}">
+	<button class="secondary" type="submit">Remove</button>
+</form>
+'''
+		else:
+			row['action'] = ''
+
+		rows.append(row)
+
+	return render_table(
+		'Group Memberships',
+		rows,
+		['name', 'slug', 'display_name', 'email', 'status', 'created_at', 'updated_at', 'action']
+	)
 
 
 def render_login_page(message: str | None = None) -> str:
@@ -1262,16 +1441,41 @@ def escape(value) -> str:
 	return html.escape(str(value), quote=True)
 
 
-def options_markup(rows: list[dict], value_key: str, label_key: str) -> str:
+def group_type_options(selected_value: str | None = None) -> str:
+	'''
+	Return group type select option markup.
+
+	:param selected_value: Selected group type
+	'''
+
+	options = []
+
+	for group_type in sorted(portal_groups.GROUP_TYPES):
+		selected = ' selected' if selected_value == group_type else ''
+		label    = group_type.replace('_', ' ').title()
+		options.append(f'<option value="{escape(group_type)}"{selected}>{escape(label)}</option>')
+
+	return ''.join(options)
+
+
+def options_markup(rows: list[dict], value_key: str, label_key: str, selected_value: str | None = None) -> str:
 	'''
 	Return select option markup.
 
 	:param rows: Option rows
 	:param value_key: Row key for option value
 	:param label_key: Row key for option label
+	:param selected_value: Optional selected value
 	'''
 
-	return ''.join(f'<option value="{escape(row[value_key])}">{escape(row[label_key])}</option>' for row in rows)
+	options = []
+
+	for row in rows:
+		value    = str(row[value_key])
+		selected = ' selected' if selected_value is not None and str(selected_value) == value else ''
+		options.append(f'<option value="{escape(value)}"{selected}>{escape(row[label_key])}</option>')
+
+	return ''.join(options)
 
 
 def require_admin(actor_id: str | None):
