@@ -19,6 +19,7 @@ pidfile   = '/var/run/prosody/prosody.pid'
 data_path = '/var/lib/prosody'
 
 modules_enabled = {
+	'tls';
 	'roster';
 	'saslauth';
 	'disco';
@@ -45,9 +46,9 @@ modules_disabled = {
 
 allow_registration = false
 
-c2s_require_encryption = true
+c2s_require_encryption = false
 s2s_require_encryption = true
-allow_unencrypted_plain_auth = false
+allow_unencrypted_plain_auth = true
 
 authentication = 'internal_hashed'
 storage        = 'internal'
