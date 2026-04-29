@@ -58,6 +58,7 @@ services:
       PORTAL_ADMIN_PORT: "${PORTAL_ADMIN_PORT:-8000}"
       PORTAL_INVITE_TOKEN_BYTES: "${PORTAL_INVITE_TOKEN_BYTES:-32}"
       PORTAL_SECRET_KEY_FILE: "/run/secrets/portal_secret_key"
+      PORTAL_SESSION_COOKIE_SECURE: "${PORTAL_SESSION_COOKIE_SECURE:-false}"
       XMPP_DOMAIN: "${XMPP_DOMAIN}"
       XMPP_MUC_DOMAIN: "${XMPP_MUC_DOMAIN}"
       XMPP_PROVISIONING_TOKEN_FILE: "/run/secrets/xmpp_provisioning_token"
@@ -125,15 +126,10 @@ services:
     networks:
       - internal
       - xmpp
-      - public
-    ports:
-      - "5222:5222"
-      - "5269:5269"
     volumes:
       - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
       - ./prosody/mod_orthodox_provisioning.lua:/usr/lib/prosody/modules/mod_orthodox_provisioning.lua:ro
       - prosody_data:/var/lib/prosody
-      - ./prosody/certs:/etc/prosody/certs:ro
     healthcheck:
       test: ["CMD", "prosodyctl", "check", "config"]
       interval: 30s

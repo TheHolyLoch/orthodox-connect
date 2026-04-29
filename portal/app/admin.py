@@ -337,7 +337,7 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		self.send_header('Location', location)
 
 		if clear_session:
-			self.send_header('Set-Cookie', f'{auth.SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+			self.send_header('Set-Cookie', clear_session_cookie())
 
 		self.end_headers()
 
@@ -2026,8 +2026,17 @@ def session_cookie(session_token: str) -> str:
 	'''
 
 	max_age = str(config.portal_session_ttl_seconds())
+	secure  = '; Secure' if config.portal_session_cookie_secure() else ''
 
-	return f'{auth.SESSION_COOKIE}={session_token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={max_age}'
+	return f'{auth.SESSION_COOKIE}={session_token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={max_age}{secure}'
+
+
+def clear_session_cookie() -> str:
+	'''Return the expired portal session cookie header value.'''
+
+	secure = '; Secure' if config.portal_session_cookie_secure() else ''
+
+	return f'{auth.SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{secure}'
 
 
 def visible_room_payload(user_id: str) -> list[dict]:

@@ -56,6 +56,9 @@ storage        = 'internal'
 c2s_ports = { 5222 }
 c2s_interfaces = { "0.0.0.0", "::" }
 
+s2s_ports = { }
+s2s_interfaces = { }
+
 http_host   = xmpp_domain
 http_ports  = { 5280 }
 https_ports = { }
@@ -73,18 +76,9 @@ VirtualHost(xmpp_domain)
 	enabled            = true
 	allow_registration = false
 
-	ssl = {
-		certificate = "/etc/prosody/certs/xmpp.orthodox.zone.crt";
-		key = "/etc/prosody/certs/xmpp.orthodox.zone.key";
-	}
-
 Component(xmpp_muc_domain, 'muc')
 	name                     = 'Orthodox Connect Group Chats'
 	restrict_room_creation   = 'admin'
 	modules_enabled          = {
 		'muc_mam';
-	}
-	ssl = {
-		certificate = "/etc/prosody/certs/rooms.xmpp.orthodox.zone.crt";
-		key = "/etc/prosody/certs/rooms.xmpp.orthodox.zone.key";
 	}

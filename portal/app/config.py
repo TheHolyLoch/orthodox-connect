@@ -92,6 +92,14 @@ def portal_secret_key() -> str:
 	return env_or_file('PORTAL_SECRET_KEY')
 
 
+def portal_session_cookie_secure() -> bool:
+	'''
+	Return whether portal session cookies should require HTTPS.
+	'''
+
+	return os.getenv('PORTAL_SESSION_COOKIE_SECURE', 'false').lower() in ('1', 'true', 'yes', 'on')
+
+
 def portal_session_ttl_seconds() -> int:
 	'''
 	Return the portal session lifetime in seconds.
