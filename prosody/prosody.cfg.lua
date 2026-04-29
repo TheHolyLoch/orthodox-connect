@@ -45,16 +45,20 @@ modules_disabled = {
 
 allow_registration = false
 
-c2s_require_encryption = false
+c2s_require_encryption = true
 s2s_require_encryption = true
-allow_unencrypted_plain_auth = true
+allow_unencrypted_plain_auth = false
 
 authentication = 'internal_hashed'
 storage        = 'internal'
 
+c2s_ports = { 5222 }
+c2s_interfaces = { "0.0.0.0", "::" }
+
 http_host   = xmpp_domain
 http_ports  = { 5280 }
 https_ports = { }
+http_interfaces = { "0.0.0.0", "::" }
 
 orthodox_provisioning_domain     = xmpp_domain
 orthodox_provisioning_muc_domain = xmpp_muc_domain
