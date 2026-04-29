@@ -99,19 +99,24 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 
 			return
 
-		if route != '/admin':
-			self.send_error(404)
+		if route in ('/admin', '/admin/audit', '/admin/manage'):
+			current_user = self.current_admin_user()
+
+			if not current_user:
+				self.redirect('/login')
+
+				return
+
+			if route == '/admin/audit':
+				self.send_html(render_audit_page(current_user, query))
+			elif route == '/admin/manage':
+				self.send_html(render_admin_page(current_user, query))
+			else:
+				self.send_html(render_admin_home_page(current_user))
 
 			return
 
-		current_user = self.current_admin_user()
-
-		if not current_user:
-			self.redirect('/login')
-
-			return
-
-		self.send_html(render_admin_page(current_user, query))
+		self.send_error(404)
 
 	def do_POST(self):
 		'''Handle admin UI POST actions.'''
@@ -343,10 +348,14 @@ class AdminRequestHandler(BaseHTTPRequestHandler):
 		:param status_code: HTTP status code
 		'''
 
+		payload = body.encode('utf-8')
 		self.send_response(status_code)
 		self.send_header('Content-Type', 'text/html; charset=utf-8')
+		self.send_header('Content-Length', str(len(payload)))
 		self.end_headers()
-		self.wfile.write(body.encode('utf-8'))
+
+		for start in range(0, len(payload), 16_384):
+			self.wfile.write(payload[start:start + 16_384])
 
 	def send_json(self, payload: dict, status_code: int = 200):
 		'''
@@ -470,6 +479,7 @@ h2 {
 }
 
 .actor,
+.filters,
 .login,
 .message {
 	display: grid;
@@ -569,11 +579,13 @@ def chat_url_from_request(handler: AdminRequestHandler) -> str:
 	return config.chat_public_url()
 
 
-def fetch_admin_state(actor_id: str | None) -> dict:
+def fetch_admin_state(actor_id: str | None, query: dict | None = None, include_audit: bool = True) -> dict:
 	'''
 	Return all data needed by the admin UI.
 
 	:param actor_id: Optional acting admin user ID
+	:param query: Optional request query filters
+	:param include_audit: Whether to load audit rows
 	'''
 
 	with db.connect_database() as connection:
@@ -593,15 +605,18 @@ def fetch_admin_state(actor_id: str | None) -> dict:
 					'verification_requests': [],
 				}
 
+			users = list_users(cursor)
+
 			return {
 				'authorized': True,
-				'audit_events': list_audit_events(cursor),
+				'audit_events': list_audit_events(cursor, query or {}) if include_audit else [],
+				'audit_filter_options': list_audit_filter_options(cursor),
 				'group_memberships': portal_groups.list_memberships(),
 				'groups': portal_groups.list_groups(),
 				'invites': list_invites(cursor),
 				'roles': list_roles(cursor),
 				'rooms': list_rooms(cursor),
-				'users': list_users(cursor),
+				'users': users,
 				'verification_requests': verifications.list_requests(),
 			}
 
@@ -796,32 +811,81 @@ def is_admin(cursor, actor_id: str | None) -> bool:
 	return rooms.has_any_scoped_role(cursor, actor_id, ADMIN_ROLES)
 
 
-def list_audit_events(cursor) -> list[dict]:
+def list_audit_events(cursor, query: dict) -> list[dict]:
 	'''
 	Return recent audit events.
 
 	:param cursor: Open database cursor
+	:param query: Request query filters
 	'''
 
+	clauses = []
+	params  = []
+
+	action = single_value(query, 'audit_action')
+	user_id = single_value(query, 'audit_user_id')
+	start_date = parse_date_filter(single_value(query, 'audit_start_date'))
+	end_date = parse_date_filter(single_value(query, 'audit_end_date'))
+
+	if action:
+		clauses.append('ae.action = %s')
+		params.append(action)
+
+	if user_id:
+		clauses.append('(ae.actor_user_id = %s OR ae.target_user_id = %s)')
+		params.extend([user_id, user_id])
+
+	if start_date:
+		clauses.append('ae.created_at >= %s')
+		params.append(start_date)
+
+	if end_date:
+		clauses.append('ae.created_at < %s')
+		params.append(end_date + timedelta(days=1))
+
+	where_clause = f'WHERE {" AND ".join(clauses)}' if clauses else ''
+
 	cursor.execute(
-		'''
+		f'''
 		SELECT
-			id,
-			actor_user_id,
-			target_user_id,
-			entity_type,
-			entity_id,
-			action,
-			scope_group_id,
-			metadata,
-			created_at
-		FROM audit_events
-		ORDER BY created_at DESC
+			ae.id,
+			ae.actor_user_id,
+			actor.display_name AS actor_name,
+			actor.email AS actor_email,
+			ae.target_user_id,
+			target.display_name AS target_name,
+			target.email AS target_email,
+			ae.entity_type,
+			ae.entity_id,
+			ae.action,
+			ae.scope_group_id,
+			g.name AS scope_group_name,
+			ae.metadata,
+			ae.created_at
+		FROM audit_events ae
+		LEFT JOIN users actor ON actor.id = ae.actor_user_id
+		LEFT JOIN users target ON target.id = ae.target_user_id
+		LEFT JOIN groups g ON g.id = ae.scope_group_id
+		{where_clause}
+		ORDER BY ae.created_at DESC
 		LIMIT 100
-		'''
+		''',
+		params
 	)
 
 	return cursor.fetchall()
+
+
+def list_audit_filter_options(cursor) -> dict:
+	'''
+	Return filter option values for the audit viewer.
+
+	:param cursor: Open database cursor
+	'''
+
+	cursor.execute('SELECT DISTINCT action FROM audit_events ORDER BY action ASC')
+
+	return {'actions': [row['action'] for row in cursor.fetchall()]}
 
 
 def list_invites(cursor) -> list[dict]:
@@ -991,6 +1055,22 @@ def parse_request_path(path: str) -> tuple[str, dict]:
 	return parsed.path, urllib.parse.parse_qs(parsed.query)
 
 
+def parse_date_filter(value: str) -> datetime | None:
+	'''
+	Return a date filter value or None.
+
+	:param value: Date string
+	'''
+
+	if not value:
+		return None
+
+	try:
+		return datetime.fromisoformat(value)
+	except ValueError:
+		return None
+
+
 def render_admin_session(current_user: dict) -> str:
 	'''
 	Return current admin session markup.
@@ -1101,7 +1181,7 @@ def render_admin_page(current_user: dict, query: dict) -> str:
 
 	actor_id = str(current_user['id'])
 	message  = single_value(query, 'message')
-	state    = fetch_admin_state(actor_id)
+	state    = fetch_admin_state(actor_id, query, include_audit=False)
 	content  = [
 		'<!doctype html>',
 		'<html lang="en">',
@@ -1131,7 +1211,7 @@ def render_admin_page(current_user: dict, query: dict) -> str:
 			render_groups(state),
 			render_roles(state['roles']),
 			render_rooms(state['rooms']),
-			render_audit_events(state['audit_events']),
+			'<section><h2>Audit Events</h2><p><a class="button" href="/admin/audit">Open Audit Viewer</a></p></section>',
 		])
 
 	content.extend(['</main>', '</body>', '</html>'])
@@ -1139,18 +1219,222 @@ def render_admin_page(current_user: dict, query: dict) -> str:
 	return '\n'.join(content)
 
 
-def render_audit_events(audit_events: list[dict]) -> str:
+def render_admin_home_page(current_user: dict) -> str:
+	'''
+	Return the protected admin landing page.
+
+	:param current_user: Authenticated admin user
+	'''
+
+	content = [
+		'<!doctype html>',
+		'<html lang="en">',
+		'<head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		'<title>Orthodox Connect Admin</title>',
+		'<link rel="stylesheet" href="/admin.css">',
+		'</head>',
+		'<body>',
+		'<header><h1>Orthodox Connect Admin</h1><p>Admin tools and audit review</p></header>',
+		'<main>',
+		render_admin_session(current_user),
+		'''
+<section>
+	<h2>Admin Tools</h2>
+	<p><a class="button" href="/admin/manage">Manage Portal</a> <a class="button" href="/admin/audit">Review Audit Events</a></p>
+</section>
+''',
+		'</main>',
+		'</body>',
+		'</html>',
+	]
+
+	return '\n'.join(content)
+
+
+def render_audit_events(state: dict, query: dict) -> str:
 	'''
 	Return audit event table markup.
 
-	:param audit_events: Audit event records
+	:param state: Admin page state
+	:param query: Parsed query data
 	'''
 
-	return render_table(
-		'Audit Events',
-		audit_events,
-		['created_at', 'action', 'entity_type', 'entity_id', 'actor_user_id', 'target_user_id', 'scope_group_id', 'metadata']
-	)
+	rows = [audit_event_row(event) for event in state['audit_events']]
+
+	return f'''
+<section>
+	<h2>Audit Events</h2>
+	{render_audit_filter_form(state, query)}
+	{render_table('', rows, ['created_at', 'event_type', 'actor', 'target', 'resource', 'status', 'metadata'])}
+</section>
+'''
+
+
+def render_audit_page(current_user: dict, query: dict) -> str:
+	'''
+	Return the admin audit viewer page.
+
+	:param current_user: Authenticated admin user
+	:param query: Parsed query data
+	'''
+
+	state   = fetch_admin_state(str(current_user['id']), query)
+	content = [
+		'<!doctype html>',
+		'<html lang="en">',
+		'<head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width, initial-scale=1">',
+		'<title>Orthodox Connect Audit</title>',
+		'<link rel="stylesheet" href="/admin.css">',
+		'</head>',
+		'<body>',
+		'<header><h1>Orthodox Connect Admin</h1><p>Audit activity review</p></header>',
+		'<main>',
+		render_admin_session(current_user),
+		'<section><p><a href="/admin">Back to admin</a></p></section>',
+	]
+
+	if not state['authorized']:
+		content.append('<section class="error">Admin role required.</section>')
+	else:
+		content.append(render_audit_events(state, query))
+
+	content.extend(['</main>', '</body>', '</html>'])
+
+	return '\n'.join(content)
+
+
+def render_audit_filter_form(state: dict, query: dict) -> str:
+	'''
+	Return audit filter controls.
+
+	:param state: Admin page state
+	:param query: Parsed query data
+	'''
+
+	selected_action = single_value(query, 'audit_action')
+	selected_user   = single_value(query, 'audit_user_id')
+	start_date      = single_value(query, 'audit_start_date')
+	end_date        = single_value(query, 'audit_end_date')
+	action_options  = ['<option value="">All event types</option>']
+	user_options    = ['<option value="">All actors and users</option>']
+
+	for action in state['audit_filter_options']['actions']:
+		selected = ' selected' if selected_action == action else ''
+		action_options.append(f'<option value="{escape(action)}"{selected}>{escape(action)}</option>')
+
+	for user in state['users']:
+		label    = f'{user["display_name"]} ({user["email"] or user["id"]})'
+		selected = ' selected' if selected_user == str(user['id']) else ''
+		user_options.append(f'<option value="{escape(user["id"])}"{selected}>{escape(label)}</option>')
+
+	return f'''
+<form class="filters" method="get" action="/admin">
+	<div class="field">
+		<label for="audit_action">Event type</label>
+		<select id="audit_action" name="audit_action">{"".join(action_options)}</select>
+	</div>
+	<div class="field">
+		<label for="audit_user_id">Actor or user</label>
+		<select id="audit_user_id" name="audit_user_id">{"".join(user_options)}</select>
+	</div>
+	<div class="field">
+		<label for="audit_start_date">From</label>
+		<input id="audit_start_date" name="audit_start_date" type="date" value="{escape(start_date)}">
+	</div>
+	<div class="field">
+		<label for="audit_end_date">To</label>
+		<input id="audit_end_date" name="audit_end_date" type="date" value="{escape(end_date)}">
+	</div>
+	<div class="field">
+		<label>&nbsp;</label>
+		<button type="submit">Filter</button>
+	</div>
+</form>
+'''
+
+
+def audit_event_row(event: dict) -> dict:
+	'''
+	Return a display row for an audit event.
+
+	:param event: Audit event record
+	'''
+
+	return {
+		'created_at': event['created_at'],
+		'event_type': event['action'],
+		'actor': audit_user_label(event, 'actor'),
+		'target': audit_user_label(event, 'target'),
+		'resource': audit_resource_label(event),
+		'status': audit_status_label(event['metadata']),
+		'metadata': safe_audit_metadata(event['metadata']),
+	}
+
+
+def audit_resource_label(event: dict) -> str:
+	'''
+	Return the audited resource label.
+
+	:param event: Audit event record
+	'''
+
+	parts = [event['entity_type']]
+
+	if event['entity_id']:
+		parts.append(str(event['entity_id']))
+
+	if event['scope_group_name']:
+		parts.append(f'group: {event["scope_group_name"]}')
+	elif event['scope_group_id']:
+		parts.append(f'group: {event["scope_group_id"]}')
+
+	return ' | '.join(parts)
+
+
+def audit_status_label(metadata: dict) -> str:
+	'''
+	Return status/result text from audit metadata when present.
+
+	:param metadata: Audit metadata
+	'''
+
+	for key in ('status', 'result', 'decision', 'reason'):
+		if isinstance(metadata, dict) and metadata.get(key):
+			return str(metadata[key])
+
+	return ''
+
+
+def audit_user_label(event: dict, prefix: str) -> str:
+	'''
+	Return a readable actor or target user label.
+
+	:param event: Audit event record
+	:param prefix: actor or target
+	'''
+
+	user_id = event[f'{prefix}_user_id']
+
+	if not user_id:
+		return ''
+
+	name  = event.get(f'{prefix}_name')
+	email = event.get(f'{prefix}_email')
+
+	if name and email:
+		return f'{name} ({email})'
+
+	if name:
+		return str(name)
+
+	if email:
+		return str(email)
+
+	return str(user_id)
 
 
 def render_groups(state: dict) -> str:
@@ -1709,6 +1993,29 @@ def require_admin(actor_id: str | None):
 		with connection.cursor() as cursor:
 			if not is_admin(cursor, actor_id):
 				raise AdminAuthorizationError('admin role required')
+
+
+def safe_audit_metadata(metadata: dict) -> dict:
+	'''
+	Return audit metadata with sensitive fields redacted.
+
+	:param metadata: Raw audit metadata
+	'''
+
+	if not isinstance(metadata, dict):
+		return {}
+
+	safe = {}
+
+	for key, value in metadata.items():
+		lowered = str(key).lower()
+
+		if any(marker in lowered for marker in ('password', 'secret', 'token', 'key')):
+			safe[key] = '[redacted]'
+		else:
+			safe[key] = value
+
+	return safe
 
 
 def session_cookie(session_token: str) -> str:
