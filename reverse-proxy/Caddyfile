@@ -1,7 +1,9 @@
 # Orthodox Connect - Developed by dgm (dgm@tuta.com)
 # orthodox-connect/reverse-proxy/Caddyfile
+# Internal HTTP-only Caddy behind public nginx TLS terminator
 
 {
+	auto_https off
 	email {$ACME_EMAIL:internal@localhost}
 }
 
@@ -38,15 +40,13 @@
 	}
 }
 
-{$PORTAL_DOMAIN} {
-	tls internal
+http://{$PORTAL_DOMAIN} {
 	import portal_headers
 
 	reverse_proxy portal:8000
 }
 
-{$CHAT_DOMAIN} {
-	tls internal
+http://{$CHAT_DOMAIN} {
 	import chat_headers
 
 	@xmpp_websocket path /xmpp-websocket /xmpp-websocket/*
@@ -58,8 +58,7 @@
 	reverse_proxy converse:80
 }
 
-{$MEET_DOMAIN} {
-	tls internal
+http://{$MEET_DOMAIN} {
 	import meet_headers
 
 	@jitsi_websocket path /xmpp-websocket /xmpp-websocket/* /colibri-ws/* /conference-request/v1
@@ -68,8 +67,7 @@
 	reverse_proxy jitsi-web:80
 }
 
-{$LIBRARY_DOMAIN} {
-	tls internal
+http://{$LIBRARY_DOMAIN} {
 	import portal_headers
 
 	respond "Orthodox Connect library service is not enabled yet." 503
